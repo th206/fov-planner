@@ -63,6 +63,19 @@
   #legend i { width: 14px; height: 3px; background: var(--c); display: inline-block; border-radius: 2px; }
   #altChart { width: 100%; height: 150px; display: block; }
   .altsum { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .wxgrid { display: grid; grid-template-columns: 50px repeat(var(--n), minmax(0, 1fr)); gap: 1px; font-size: 9.5px; font-variant-numeric: tabular-nums; }
+  .wxgrid > div { text-align: center; padding: 3px 0; border-radius: 2px; white-space: nowrap; overflow: hidden; }
+  .wxgrid .lbl { text-align: left; color: var(--muted); padding-left: 0; }
+  .wxgrid .hd { color: var(--muted); }
+  .wxgrid .hd.dark { color: var(--text); font-weight: 700; }
+  .wxgrid .g { background: color-mix(in srgb, var(--good) 28%, transparent); }
+  .wxgrid .w { background: color-mix(in srgb, var(--warn) 30%, transparent); }
+  .wxgrid .b { background: color-mix(in srgb, var(--bad) 32%, transparent); }
+  .wxgrid .sep { grid-column: 1 / -1; height: 4px; padding: 0; }
+  .wxsum { font-size: 12px; line-height: 1.6; margin-bottom: 8px; }
+  .wxsum b { font-weight: 600; }
+  .wxnote { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+  #wxLinks a { color: var(--accent); }
   #fatal { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; padding: 30px; text-align: center; color: var(--muted); }
   dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 16px; width: min(720px, 94vw); }
   dialog::backdrop { background: rgba(0,0,0,.6); }
@@ -128,6 +141,13 @@
       <h2>Visibility <input id="night" type="date" aria-label="Night of"></h2>
       <canvas id="altChart" aria-label="Altitude of target through the night"></canvas>
       <div class="altsum" id="altSum"></div>
+    </section>
+
+    <section class="card">
+      <h2>Conditions <button class="icon ghost" id="wxReload" title="Refresh forecast">↻</button></h2>
+      <div id="wxSum" class="wxsum"></div>
+      <div id="wx"></div>
+      <div class="note" id="wxLinks" style="margin-top:8px"></div>
     </section>
 
     <section class="card">
@@ -613,6 +633,126 @@ function drawAltChart() {
   $('#altSum').innerHTML = `Highest ${peak.toFixed(0)}° at ${String(lt.getUTCHours()).padStart(2, '0')}:${String(lt.getUTCMinutes()).padStart(2, '0')} · <b style="color:var(--text)">${(good / 3600e3).toFixed(1)} h</b> above 30° in astronomical darkness`;
 }
 
+/* ---------- Weather & seeing (Open-Meteo) ---------- */
+const WX_HOURLY = 'cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,relative_humidity_2m,temperature_2m,dew_point_2m,wind_speed_10m,wind_gusts_10m,wind_speed_250hPa';
+let wxSeq = 0, wxTimer;
+async function fetchJson(url, ms = 15000) {
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ctl.signal });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) {
+      if (/out of allowed range/.test(j.reason || '')) throw new Error('No forecast for this date yet. Forecasts cover about the next 2 weeks.');
+      throw new Error(j.reason || 'Forecast service error ' + r.status);
+    }
+    return j;
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('Forecast service did not respond. Try ↻.');
+    if (e instanceof TypeError) throw new Error('Could not reach the forecast service. Check your connection.');
+    throw e;
+  } finally { clearTimeout(timer); }
+}
+function nightWindow() {
+  const { tz } = state.site;
+  const [y, mo, d] = ($('#night').value || new Date().toISOString().slice(0, 10)).split('-').map(Number);
+  const t0 = Date.UTC(y, mo - 1, d, 16) - tz * 3600e3;
+  return { t0, t1: t0 + 16 * 3600e3 };
+}
+function scheduleWeather() { clearTimeout(wxTimer); wxTimer = setTimeout(loadWeather, 600); }
+async function loadWeather() {
+  const seq = ++wxSeq;
+  const { lat, lon } = state.site, { t0, t1 } = nightWindow();
+  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const q = `latitude=${lat}&longitude=${lon}&timezone=GMT&start_date=${day(t0)}&end_date=${day(t1)}`;
+  renderWxLinks();
+  $('#wxSum').innerHTML = '<span class="note">Loading forecast…</span>'; $('#wx').innerHTML = '';
+  try {
+    const [w, a] = await Promise.all([
+      fetchJson(`https://api.open-meteo.com/v1/forecast?${q}&hourly=${WX_HOURLY}`),
+      fetchJson(`https://air-quality-api.open-meteo.com/v1/air-quality?${q}&hourly=aerosol_optical_depth,dust`).catch(() => null),
+    ]);
+    if (seq === wxSeq) renderWeather(w, a, t0, t1);
+  } catch (e) {
+    if (seq === wxSeq) { $('#wxSum').innerHTML = `<span class="note">${esc(e.message)}</span>`; $('#wx').innerHTML = ''; }
+  }
+}
+function hourlyLookup(j) {
+  const m = new Map();
+  if (!j?.hourly?.time) return () => undefined;
+  j.hourly.time.forEach((t, i) => m.set(Date.parse(t + 'Z'), i));
+  return (key, ms) => { const i = m.get(ms); return i == null ? undefined : j.hourly[key]?.[i]; };
+}
+const grade = (v, good, bad, higherIsBad = true) =>
+  v == null ? '' : higherIsBad ? (v <= good ? 'g' : v >= bad ? 'b' : 'w') : (v >= good ? 'g' : v <= bad ? 'b' : 'w');
+function renderWeather(w, a, t0, t1) {
+  const W = hourlyLookup(w), Aq = hourlyLookup(a);
+  const { lat, lon, tz } = state.site;
+  const hours = [];
+  for (let ms = t0; ms < t1; ms += 3600e3) {
+    const [sr, sd] = sunRaDec(ms + 1800e3);
+    hours.push({ ms, dark: altAz(sr, sd, ms + 1800e3, lat, lon) < -18 });
+  }
+  const val = (k, ms) => W(k, ms);
+  const rows = [
+    ['Cloud %',  (ms) => val('cloud_cover', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
+    ['Low',      (ms) => val('cloud_cover_low', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
+    ['Mid',      (ms) => val('cloud_cover_mid', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
+    ['High',     (ms) => val('cloud_cover_high', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
+    null,
+    ['Humidity', (ms) => val('relative_humidity_2m', ms), (v) => grade(v, 70, 85), (v) => Math.round(v)],
+    ['Dew gap°', (ms) => { const t = val('temperature_2m', ms), d = val('dew_point_2m', ms); return t == null || d == null ? undefined : t - d; },
+                 (v) => grade(v, 4, 2, false), (v) => Math.round(v)],
+    ['Gust km/h', (ms) => val('wind_gusts_10m', ms), (v) => grade(v, 15, 30), (v) => Math.round(v)],
+    ['Jet m/s', (ms) => { const v = val('wind_speed_250hPa', ms); return v == null ? undefined : v / 3.6; }, (v) => grade(v, 25, 42), (v) => Math.round(v)],
+    ['Dust AOD', (ms) => Aq('aerosol_optical_depth', ms), (v) => grade(v, 0.3, 0.6), (v) => v.toFixed(1).replace(/^0/, '')],
+  ];
+  let html = `<div class="wxgrid" style="--n:${hours.length}"><div class="lbl"></div>`;
+  for (const h of hours) {
+    const lh = new Date(h.ms + tz * 3600e3).getUTCHours();
+    html += `<div class="hd ${h.dark ? 'dark' : ''}" title="${h.dark ? 'Astronomical darkness' : 'Twilight / daylight'}">${String(lh).padStart(2, '0')}</div>`;
+  }
+  for (const r of rows) {
+    if (!r) { html += '<div class="sep"></div>'; continue; }
+    const [label, get, cls, fmt] = r;
+    html += `<div class="lbl">${label}</div>`;
+    for (const h of hours) {
+      const v = get(h.ms);
+      html += v == null || !isFinite(v) ? '<div>·</div>' : `<div class="${cls(v)}">${fmt(v)}</div>`;
+    }
+  }
+  html += '</div><div class="wxnote">Bold hours are astronomical darkness. Dew gap = air temperature minus dew point (under 2° means dew risk). Jet = wind at ~10 km altitude, the main driver of seeing (under 25 m/s is good). AOD = dust/haze; above 0.6 the sky is noticeably milky.</div>';
+  $('#wx').innerHTML = html;
+
+  // Summary over dark hours
+  const dark = hours.filter((h) => h.dark);
+  const use = dark.length ? dark : hours;
+  const avg = (f) => { const v = use.map((h) => f(h.ms)).filter((x) => x != null && isFinite(x)); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
+  const max = (f) => { const v = use.map((h) => f(h.ms)).filter((x) => x != null && isFinite(x)); return v.length ? Math.max(...v) : null; };
+  const min = (f) => { const v = use.map((h) => f(h.ms)).filter((x) => x != null && isFinite(x)); return v.length ? Math.min(...v) : null; };
+  const cloud = avg((ms) => val('cloud_cover', ms));
+  const hum = max((ms) => val('relative_humidity_2m', ms));
+  const dew = min((ms) => { const t = val('temperature_2m', ms), d = val('dew_point_2m', ms); return t == null || d == null ? null : t - d; });
+  const jet = avg((ms) => { const v = val('wind_speed_250hPa', ms); return v == null ? null : v / 3.6; });
+  const gust = max((ms) => val('wind_gusts_10m', ms));
+  const aod = avg((ms) => Aq('aerosol_optical_depth', ms));
+  if (cloud == null) { $('#wxSum').innerHTML = '<span class="note">No forecast data for this night.</span>'; return; }
+  const tag = (c, t) => `<span class="tag ${c}">${t}</span>`;
+  const sky = cloud < 20 ? tag('good', 'clear') : cloud < 50 ? tag('warn', 'partly cloudy') : tag('bad', 'cloudy');
+  const seeing = jet == null ? '—' : jet < 25 ? tag('good', 'likely good') : jet < 42 ? tag('warn', 'average') : tag('bad', 'likely poor');
+  const transp = aod == null ? '—' : aod < 0.3 ? tag('good', 'good') : aod < 0.6 ? tag('warn', 'hazy') : tag('bad', 'dusty');
+  const wind = gust == null ? '' : gust < 15 ? '' : gust < 30 ? ` · gusts to ${Math.round(gust)} km/h` : ` · ${tag('bad', 'windy')} gusts ${Math.round(gust)} km/h`;
+  const dewTxt = dew != null && dew < 2 ? ` · ${tag('bad', 'dew risk')}` : hum != null && hum > 85 ? ` · ${tag('warn', 'humid')}` : '';
+  $('#wxSum').innerHTML = `${dark.length ? 'Dark hours' : 'Tonight'}: ${sky} ${cloud.toFixed(0)}% cloud · Seeing ${seeing} <span class="note">(jet stream ${jet != null ? Math.round(jet) : '—'} m/s)</span><br>
+    Transparency ${transp} <span class="note">(AOD ${aod != null ? aod.toFixed(2) : '—'})</span>${wind}${dewTxt}`;
+}
+function renderWxLinks() {
+  const { lat, lon } = state.site;
+  const mb = `${Math.abs(lat).toFixed(3)}${lat >= 0 ? 'N' : 'S'}${Math.abs(lon).toFixed(3)}${lon >= 0 ? 'E' : 'W'}`;
+  $('#wxLinks').innerHTML = `Forecast: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (ECMWF/GFS models, CAMS dust).
+    For a seeing forecast in arcseconds: <a href="https://www.meteoblue.com/en/weather/outdoorsports/seeing/${mb}" target="_blank" rel="noopener">meteoblue seeing</a> ·
+    <a href="https://clearoutside.com/forecast/${lat.toFixed(2)}/${lon.toFixed(2)}" target="_blank" rel="noopener">Clear Outside</a>`;
+}
+
 /* ---------- Equipment dialog ---------- */
 function eqRowScope(s) { return `<tr data-id="${s.id}"><td><input data-f="name" value="${esc(s.name)}"></td><td><input data-f="fl" type="number" min="1" value="${s.fl}"></td><td><input data-f="ap" type="number" min="0" step="0.1" value="${s.ap ?? ''}"></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
 function eqRowCam(c) { return `<tr data-id="${c.id}"><td><input data-f="name" value="${esc(c.name)}"></td><td><input data-f="wpx" type="number" min="1" value="${c.wpx}"></td><td><input data-f="hpx" type="number" min="1" value="${c.hpx}"></td><td><input data-f="px" type="number" min="0.1" step="0.01" value="${c.px}"></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
@@ -668,10 +808,11 @@ $('#seeing').value = state.seeing;
 $('#seeing').addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (v > 0) { state.seeing = v; saveStore(); renderRigStats(); } });
 for (const k of ['lat', 'lon', 'tz']) {
   $('#' + k).value = state.site[k];
-  $('#' + k).addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (isFinite(v)) { state.site[k] = v; saveStore(); drawAltChart(); if (state.target) renderTarget(); } });
+  $('#' + k).addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (isFinite(v)) { state.site[k] = v; saveStore(); drawAltChart(); scheduleWeather(); if (state.target) renderTarget(); } });
 }
 { const now = new Date(Date.now() + state.site.tz * 3600e3); $('#night').value = now.toISOString().slice(0, 10); }
-$('#night').addEventListener('change', drawAltChart);
+$('#night').addEventListener('change', () => { drawAltChart(); loadWeather(); });
+$('#wxReload').addEventListener('click', loadWeather);
 window.addEventListener('resize', drawAltChart);
 $('#eqBtn').addEventListener('click', () => openEq());
 $('#eqCancel').addEventListener('click', () => $('#eqDlg').close());
@@ -683,6 +824,7 @@ $('#eqDlg').addEventListener('click', (e) => { if (e.target.matches('[data-del]'
 
 renderRigs();
 drawAltChart();
+loadWeather();
 try {
   await initAladin();
 } catch (e) {
