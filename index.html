@@ -147,6 +147,12 @@
       <h2>Conditions <button class="icon ghost" id="wxReload" title="Refresh forecast">↻</button></h2>
       <div id="wxSum" class="wxsum"></div>
       <div id="wx"></div>
+      <details id="t7" style="margin-top:10px">
+        <summary class="note" style="cursor:pointer">7Timer ASTRO forecast (seeing &amp; transparency, 3 days)</summary>
+        <a id="t7link" target="_blank" rel="noopener" title="Open on 7Timer"><img id="t7img" alt="7Timer ASTRO forecast chart" style="width:100%;margin-top:6px;border-radius:6px;background:#000;min-height:40px"></a>
+        <div class="wxnote">Seeing &amp; transparency dots: white = better, grey = worse.
+          <a href="https://www.7timer.info/doc.php?lang=en#astro" target="_blank" rel="noopener" style="color:var(--accent)">How to read it</a>. 7Timer is a free GFS-based service and can be slow to load.</div>
+      </details>
       <div class="note" id="wxLinks" style="margin-top:8px"></div>
     </section>
 
@@ -665,6 +671,7 @@ async function loadWeather() {
   const day = (ms) => new Date(ms).toISOString().slice(0, 10);
   const q = `latitude=${lat}&longitude=${lon}&timezone=GMT&start_date=${day(t0)}&end_date=${day(t1)}`;
   renderWxLinks();
+  if ($('#t7').open) load7Timer();
   $('#wxSum').innerHTML = '<span class="note">Loading forecast…</span>'; $('#wx').innerHTML = '';
   try {
     const [w, a] = await Promise.all([
@@ -812,7 +819,15 @@ for (const k of ['lat', 'lon', 'tz']) {
 }
 { const now = new Date(Date.now() + state.site.tz * 3600e3); $('#night').value = now.toISOString().slice(0, 10); }
 $('#night').addEventListener('change', () => { drawAltChart(); loadWeather(); });
-$('#wxReload').addEventListener('click', loadWeather);
+$('#wxReload').addEventListener('click', () => { loadWeather(); if ($('#t7').open) load7Timer(); });
+function load7Timer() {
+  const { lat, lon } = state.site;
+  const q = `lon=${lon.toFixed(3)}&lat=${lat.toFixed(3)}&ac=0&unit=metric&tzshift=0`;
+  $('#t7img').src = `https://www.7timer.info/bin/astro.php?${q}&output=internal&_=${Math.floor(Date.now() / 36e5)}`;
+  $('#t7link').href = `https://www.7timer.info/bin/astro.php?${q}&output=internal`;
+}
+$('#t7').addEventListener('toggle', () => { if ($('#t7').open) load7Timer(); });
+$('#t7img').addEventListener('error', () => { $('#t7img').alt = '7Timer did not respond. Try ↻ later.'; });
 window.addEventListener('resize', drawAltChart);
 $('#eqBtn').addEventListener('click', () => openEq());
 $('#eqCancel').addEventListener('click', () => $('#eqDlg').close());
