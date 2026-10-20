@@ -151,7 +151,7 @@
         <label>Lon <input id="lon" class="num" type="number" step="0.01"></label>
         <label>UTC± <input id="tz" class="num" type="number" step="0.5" style="width:52px"></label>
       </div>
-      <div class="note" style="margin-top:8px">Imagery &amp; name lookup: CDS Aladin Lite, Sesame, SIMBAD. Settings and rigs are saved in this browser.</div>
+      <div class="note" style="margin-top:8px">Imagery &amp; name lookup: CDS Aladin Lite and SIMBAD. Settings and rigs are saved in this browser.</div>
     </section>
   </aside>
 
@@ -205,7 +205,7 @@ const DEFAULT_RIGS = [
   { scope: 'z61',  cam: 'a294' },
 ].map((r, i) => ({ id: newId(), factor: 1, rot: 0, cols: 1, rows: 1, overlap: 15, color: COLORS[i], on: true, ...r }));
 
-const QUICK = ['M31', 'M42', 'M33', 'M51', 'M101', 'NGC 7000', 'IC 1396', 'NGC 6960', 'NGC 2237', 'IC 1805', 'M16', 'NGC 6888', 'B33'];
+const QUICK = ['M31', 'M42', 'M33', 'M51', 'M101', 'NGC 7000', 'IC 1396', 'NGC 6960', 'NGC 2237', 'IC 1805', 'M16', 'NGC 6888', 'Horsehead Nebula'];
 // Fallback apparent sizes (arcmin) for big nebulae where SIMBAD often has no dimensions.
 const SIZE_FALLBACK = {
   'NGC 7000': [120, 100, 0], 'IC 1396': [170, 140, 0], 'NGC 6960': [70, 6, 160], 'NGC 6992': [60, 8, 20],
@@ -328,6 +328,7 @@ async function initAladin() {
     drawFrames(); updateHud();
   });
   aladin.on('zoomChanged', updateHud);
+  drawFrames(); updateHud();
 }
 
 function drawFrames() {
@@ -394,36 +395,44 @@ function parseCoords(q) {
   }
   return null;
 }
+const TAP = 'https://simbad.cds.unistra.fr/simbad/sim-tap/sync?REQUEST=doQuery&LANG=ADQL&FORMAT=json&QUERY=';
+async function tap(adql, ms = 15000) {
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    const r = await fetch(TAP + encodeURIComponent(adql), { signal: ctl.signal });
+    if (!r.ok) throw new Error('SIMBAD error ' + r.status);
+    const j = await r.json();
+    return (j.data || []).map((row) => Object.fromEntries(j.metadata.map((m, k) => [m.name, row[k]])));
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'SIMBAD did not respond — try again.' : 'Could not reach SIMBAD — check your connection.');
+  } finally { clearTimeout(timer); }
+}
+const sq = (s) => s.replace(/'/g, "''");
 async function resolveName(q) {
   const c = parseCoords(q);
-  if (c) return { name: q.trim(), ra: c.ra, dec: c.dec, coordsOnly: true };
-  const res = await fetch('https://cds.unistra.fr/cgi-bin/nph-sesame/-oIF/SNV?' + encodeURIComponent(q.trim()));
-  const txt = await res.text();
-  const t = { name: q.trim(), aliases: [], mags: {} };
-  for (const line of txt.split('\n')) {
-    let m;
-    if (!('ra' in t) && (m = line.match(/^%J\s+([-+\d.]+)\s+([-+\d.]+)/))) { t.ra = +m[1]; t.dec = +m[2]; }
-    else if (!t.mainId && (m = line.match(/^%I\.0\s+(.+)$/))) t.mainId = m[1].trim();
-    else if (!t.otype && (m = line.match(/^%C\.0\s+(.+)$/))) t.otype = m[1].trim();
-    else if (!t.morph && (m = line.match(/^%T\s+(.+)$/))) t.morph = m[1].trim();
-    else if ((m = line.match(/^%M\.?([A-Za-z]+)\s+([-+\d.]+)/))) { if (!(m[1] in t.mags)) t.mags[m[1]] = +m[2]; }
-    else if ((m = line.match(/^%I\s+NAME\s+(.+)$/))) t.aliases.push(m[1].trim());
-  }
-  if (!('ra' in t)) throw new Error(`Couldn't find “${q}”`);
+  if (c) return { name: q.trim(), ra: c.ra, dec: c.dec, coordsOnly: true, mags: {}, aliases: [] };
+  const name = q.trim().replace(/\s+/g, ' ');
+  // SIMBAD normalises identifiers (M31 = "M  31", "Pelican Nebula" = "NAME Pelican Nebula")
+  const cands = [name, 'NAME ' + name, name.replace(/^(sh2|sh 2)[- ]?/i, 'Sh 2-'), name.replace(/^b\s*(\d+)$/i, 'Barnard $1')];
+  const list = [...new Set(cands)].map((x) => `'${sq(x)}'`).join(',');
+  const rows = await tap(`SELECT TOP 1 b.oid, b.main_id, b.ra, b.dec, b.otype, o.description, b.morph_type,
+      b.galdim_majaxis, b.galdim_minaxis, b.galdim_angle, f.V, f.B
+    FROM ident AS i JOIN basic AS b ON b.oid = i.oidref
+    LEFT JOIN otypedef AS o ON o.otype = b.otype LEFT JOIN allfluxes AS f ON f.oidref = b.oid
+    WHERE i.id IN (${list})`);
+  if (!rows.length) throw new Error(`Couldn't find “${q.trim()}” in SIMBAD. Try a catalog ID (e.g. NGC 7000) or coordinates.`);
+  const d = rows[0];
+  const t = { name: q.trim(), mainId: d.main_id, ra: d.ra, dec: d.dec, otype: d.otype, typeDesc: d.description,
+    morph: d.morph_type, mags: {}, aliases: [] };
+  if (d.V != null) t.mags.V = d.V; if (d.B != null) t.mags.B = d.B;
+  if (d.galdim_majaxis) t.size = { maj: d.galdim_majaxis, min: d.galdim_minaxis || d.galdim_majaxis, pa: d.galdim_angle || 0, src: 'SIMBAD' };
+  try {
+    const al = await tap(`SELECT TOP 6 id FROM ident WHERE oidref = ${+d.oid} AND id LIKE 'NAME %'`, 8000);
+    t.aliases = al.map((a) => a.id.replace(/^NAME /, ''));
+  } catch { /* aliases are optional */ }
   return t;
 }
-async function simbadDetails(mainId) {
-  const id = mainId.replace(/'/g, "''");
-  const adql = `SELECT TOP 1 b.main_id, b.otype, o.description, b.galdim_majaxis, b.galdim_minaxis, b.galdim_angle, f.V, f.B
-    FROM basic AS b LEFT JOIN otypedef AS o ON o.otype = b.otype LEFT JOIN allfluxes AS f ON f.oidref = b.oid
-    WHERE b.main_id = '${id}'`;
-  const url = 'https://simbad.cds.unistra.fr/simbad/sim-tap/sync?REQUEST=doQuery&LANG=ADQL&FORMAT=json&QUERY=' + encodeURIComponent(adql);
-  const j = await (await fetch(url)).json();
-  if (!j.data?.length) return null;
-  const row = {}; j.metadata.forEach((m, i) => { row[m.name] = j.data[0][i]; });
-  return row;
-}
-const normId = (s) => (s || '').replace(/\s+/g, ' ').trim();
+const normId = (s) => (s || '').replace(/^NAME /, '').replace(/\s+/g, ' ').trim();
 
 async function search(q) {
   if (!q.trim()) return;
@@ -437,19 +446,10 @@ async function search(q) {
     $('#q').value = q.trim();
     if (aladin) aladin.gotoRaDec(t.ra, t.dec);
     st.textContent = '';
-    if (t.mainId) {
-      try {
-        const d = await simbadDetails(t.mainId);
-        if (d) {
-          t.typeDesc = d.description; t.otype = t.otype || d.otype;
-          if (d.V != null) t.mags.V = d.V; if (d.B != null && t.mags.B == null) t.mags.B = d.B;
-          if (d.galdim_majaxis) state.size = { maj: d.galdim_majaxis, min: d.galdim_minaxis || d.galdim_majaxis, pa: d.galdim_angle || 0, src: 'SIMBAD' };
-        }
-      } catch { /* details are best-effort */ }
-      if (!state.size) {
-        const fb = SIZE_FALLBACK[normId(t.mainId)] || SIZE_FALLBACK[normId(q).toUpperCase().replace(/^(M|NGC|IC|B)\s*/, '$1 ')];
-        if (fb) state.size = { maj: fb[0], min: fb[1], pa: fb[2], src: 'approx.' };
-      }
+    state.size = t.size || null;
+    if (!state.size && t.mainId) {
+      const fb = SIZE_FALLBACK[normId(t.mainId)] || SIZE_FALLBACK[normId(q).toUpperCase().replace(/^(M|NGC|IC|B)\s*/, '$1 ')];
+      if (fb) state.size = { maj: fb[0], min: fb[1], pa: fb[2], src: 'approx.' };
     }
     renderTarget(); drawTarget(); fitView(); drawFrames(); renderRigStats(); drawAltChart(); updateHud();
   } catch (e) {

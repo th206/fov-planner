@@ -3,7 +3,7 @@
 Plan astrophotography framing with **several telescope + camera combinations overlaid on the same target at once**.
 
 - Search any object by name (M31, NGC 7000, "Pelican Nebula") or coordinates (`20 58 47 +44 20` or `314.7 44.3`)
-- Object details from CDS Sesame and SIMBAD: type, coordinates, apparent size, magnitude
+- Object details from SIMBAD: type, coordinates, apparent size, magnitude
 - One colored frame per rig, each with its own rotation, reducer factor and mosaic (cols × rows, overlap %)
 - Per-rig FOV, image scale (″/px), sampling vs. your seeing, and whether the target fits
 - Altitude chart for any night, with twilight shading and hours above 30° in astronomical darkness
