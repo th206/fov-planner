@@ -171,6 +171,7 @@
           </select>
         </label>
         <label>Seeing ″ <input id="seeing" class="num" type="number" step="0.1" min="0.5"></label>
+        <label title="Use tonight's forecast seeing (on target) for the sampling check"><input type="checkbox" id="useFc"> use forecast</label>
       </div>
       <div class="row" style="margin-top:8px">
         <label>Lat <input id="lat" class="num" type="number" step="0.01"></label>
@@ -249,7 +250,7 @@ function saveStore() {
   try {
     localStorage.setItem(KEY, JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      seeing: state.seeing, site: state.site, follow: state.follow,
+      seeing: state.seeing, useFcSeeing: state.useFcSeeing, site: state.site, follow: state.follow,
     }));
   } catch { /* storage unavailable */ }
 }
@@ -262,6 +263,8 @@ const state = {
   seeing: saved.seeing || 2.0,
   site: saved.site || { lat: 25.29, lon: 51.53, tz: 3 },
   follow: saved.follow ?? true,
+  useFcSeeing: saved.useFcSeeing ?? true,
+  fcSeeing: null,
   target: null,          // {name, ra, dec, ...}
   size: null,            // {maj, min, pa} arcmin
   center: [10.6847, 41.2690],
@@ -477,7 +480,7 @@ async function search(q) {
       const fb = SIZE_FALLBACK[normId(t.mainId)] || SIZE_FALLBACK[normId(q).toUpperCase().replace(/^(M|NGC|IC|B)\s*/, '$1 ')];
       if (fb) state.size = { maj: fb[0], min: fb[1], pa: fb[2], src: 'approx.' };
     }
-    renderTarget(); drawTarget(); fitView(); drawFrames(); renderRigStats(); drawAltChart(); updateHud();
+    renderTarget(); drawTarget(); fitView(); drawFrames(); renderRigStats(); drawAltChart(); rerenderWeather(); updateHud();
   } catch (e) {
     st.className = 'err'; st.textContent = e.message || 'Lookup failed — check the name or your connection.';
   }
@@ -554,8 +557,10 @@ function renderRigStats() {
     const r = state.rigs.find((x) => x.id === el.dataset.id); const g = r && rigGeom(r);
     const box = el.querySelector('[data-stats]');
     if (!g) { box.textContent = 'Missing telescope or camera'; continue; }
-    const see = state.seeing;
+    const useFc = state.useFcSeeing && state.fcSeeing;
+    const see = useFc ? state.fcSeeing : state.seeing;
     const samp = g.scale < see / 3.5 ? ['warn', 'oversampled'] : g.scale > see / 1.5 ? ['warn', 'undersampled'] : ['good', 'well sampled'];
+    samp[1] += ` for ${see.toFixed(1)}″${useFc ? ' forecast' : ''}`;
     let fit = '';
     const z = state.size;
     if (z?.maj) {
@@ -640,8 +645,12 @@ function drawAltChart() {
 }
 
 /* ---------- Weather & seeing (Open-Meteo) ---------- */
-const WX_HOURLY = 'cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,relative_humidity_2m,temperature_2m,dew_point_2m,wind_speed_10m,wind_gusts_10m,wind_speed_250hPa';
-let wxSeq = 0, wxTimer;
+const WX_HOURLY = ['cloud_cover', 'cloud_cover_low', 'cloud_cover_mid', 'cloud_cover_high', 'relative_humidity_2m', 'temperature_2m',
+  'dew_point_2m', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m', 'surface_pressure',
+  ...[1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200, 150, 100].flatMap((p) =>
+    [`temperature_${p}hPa`, `wind_speed_${p}hPa`, `wind_direction_${p}hPa`, `geopotential_height_${p}hPa`])].join(',');
+let wxSeq = 0, wxTimer, wxLast = null;
+const rerenderWeather = () => { if (wxLast) renderWeather(...wxLast); };
 async function fetchJson(url, ms = 15000) {
   const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), ms);
   try {
@@ -678,7 +687,7 @@ async function loadWeather() {
       fetchJson(`https://api.open-meteo.com/v1/forecast?${q}&hourly=${WX_HOURLY}`),
       fetchJson(`https://air-quality-api.open-meteo.com/v1/air-quality?${q}&hourly=aerosol_optical_depth,dust`).catch(() => null),
     ]);
-    if (seq === wxSeq) renderWeather(w, a, t0, t1);
+    if (seq === wxSeq) { wxLast = [w, a, t0, t1]; renderWeather(w, a, t0, t1); }
   } catch (e) {
     if (seq === wxSeq) { $('#wxSum').innerHTML = `<span class="note">${esc(e.message)}</span>`; $('#wx').innerHTML = ''; }
   }
@@ -691,26 +700,84 @@ function hourlyLookup(j) {
 }
 const grade = (v, good, bad, higherIsBad = true) =>
   v == null ? '' : higherIsBad ? (v <= good ? 'g' : v >= bad ? 'b' : 'w') : (v >= good ? 'g' : v <= bad ? 'b' : 'w');
+/* Seeing model: Tatarskii Cn² with Dewan (1993) outer-scale parameterisation, integrated over pressure levels.
+   Cn² = 2.8 · M² · L0^(4/3),  M = 79e-6 · P/T² · dθ/dz,  seeing = 0.98 λ / r0 at 500 nm. */
+const SEE_LEVELS = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200, 150, 100];
+function seeingAt(W, ms, elev) {
+  const sp = W('surface_pressure', ms), t2 = W('temperature_2m', ms);
+  if (sp == null || t2 == null) return null;
+  const L = [{ z: elev + 2, p: sp, T: t2 + 273.15, ws: (W('wind_speed_10m', ms) || 0) / 3.6, wd: W('wind_direction_10m', ms) || 0 }];
+  for (const p of SEE_LEVELS) {
+    const z = W(`geopotential_height_${p}hPa`, ms), T = W(`temperature_${p}hPa`, ms), ws = W(`wind_speed_${p}hPa`, ms), wd = W(`wind_direction_${p}hPa`, ms);
+    if (z == null || T == null || ws == null || p >= sp || z <= elev + 20) continue;
+    L.push({ z, p, T: T + 273.15, ws: ws / 3.6, wd });
+  }
+  if (L.length < 6) return null;
+  const th = (x) => x.T * Math.pow(1000 / x.p, 0.286);
+  const uv = (x) => [-x.ws * Math.sin(x.wd * D2R), -x.ws * Math.cos(x.wd * D2R)];
+  let sum = 0, strat = false;
+  const parts = { ground: 0, low: 0, mid: 0, high: 0 };
+  for (let k = 0; k < L.length - 1; k++) {
+    const a = L[k], b = L[k + 1], dz = b.z - a.z; if (dz <= 0) continue;
+    const [ua, va] = uv(a), [ub, vb] = uv(b);
+    const S = Math.min(0.06, Math.hypot(ub - ua, vb - va) / dz); // wind shear, 1/s (clamped)
+    const lapse = -(b.T - a.T) / dz * 1000;                       // K/km
+    if (b.p <= 400 && lapse < 2) strat = true;                    // above the tropopause
+    const Pm = (a.p + b.p) / 2, Tm = (a.T + b.T) / 2;
+    // Dewan's model is calibrated for the free atmosphere; clamp extreme near-surface gradients (hot ground, strong inversions)
+    const dth = Math.max(-0.01, Math.min(0.03, (th(b) - th(a)) / dz));
+    const M = 79e-6 * Pm / (Tm * Tm) * dth;
+    const L43 = Math.pow(0.1, 4 / 3) * Math.pow(10, Math.min(6, strat ? 0.506 + 50 * S : 1.64 + 42 * S));
+    const c = 2.8 * M * M * L43 * dz;
+    sum += c;
+    const zm = (a.z + b.z) / 2 - elev;
+    parts[zm < 1000 ? 'ground' : zm < 3000 ? 'low' : zm < 8000 ? 'mid' : 'high'] += c;
+  }
+  if (!(sum > 0)) return null;
+  const lam = 500e-9, k2 = (2 * Math.PI / lam) ** 2;
+  const fwhm = (s) => 0.98 * lam / Math.pow(0.423 * k2 * s, -3 / 5) * 206265;
+  const freeSum = sum - parts.ground;
+  const main = Object.entries(parts).sort((x, y) => y[1] - x[1])[0][0];
+  return { total: Math.min(6, fwhm(sum)), free: freeSum > 0 ? Math.min(6, fwhm(freeSum)) : 0, main, share: parts[main] / sum };
+}
+const LAYER_NAME = { ground: 'ground layer (<1 km)', low: 'low air (1–3 km)', mid: 'mid air (3–8 km)', high: 'jet / tropopause (>8 km)' };
+const airmassFactor = (alt) => Math.pow(1 / Math.sin(Math.max(alt, 5) * D2R), 0.6);
+
 function renderWeather(w, a, t0, t1) {
   const W = hourlyLookup(w), Aq = hourlyLookup(a);
   const { lat, lon, tz } = state.site;
+  const elev = w.elevation || 0;
+  const t = state.target;
   const hours = [];
   for (let ms = t0; ms < t1; ms += 3600e3) {
-    const [sr, sd] = sunRaDec(ms + 1800e3);
-    hours.push({ ms, dark: altAz(sr, sd, ms + 1800e3, lat, lon) < -18 });
+    const mid = ms + 1800e3, [sr, sd] = sunRaDec(mid);
+    const h = { ms, dark: altAz(sr, sd, mid, lat, lon) < -18, see: seeingAt(W, ms, elev) };
+    h.tAlt = t ? altAz(t.ra, t.dec, mid, lat, lon) : null;
+    h.tSee = h.see && h.tAlt > 10 ? Math.min(6, h.see.total * airmassFactor(h.tAlt)) : null;
+    hours.push(h);
   }
+  const H = Object.fromEntries(hours.map((h) => [h.ms, h]));
   const val = (k, ms) => W(k, ms);
+  const jetAt = (ms) => { const v = [300, 250, 200].map((p) => val(`wind_speed_${p}hPa`, ms)).filter((x) => x != null); return v.length ? Math.max(...v) / 3.6 : undefined; };
+  const coolAt = (ms) => { const a1 = val('temperature_2m', ms), a0 = val('temperature_2m', ms - 3600e3); return a1 == null || a0 == null ? undefined : a0 - a1; };
+  const seeCls = (v) => grade(v, 1.5, 2.5);
+  const seeFmt = (v) => (v >= 6 ? '6+' : v.toFixed(1));
   const rows = [
     ['Cloud %',  (ms) => val('cloud_cover', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
     ['Low',      (ms) => val('cloud_cover_low', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
     ['Mid',      (ms) => val('cloud_cover_mid', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
     ['High',     (ms) => val('cloud_cover_high', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
     null,
+    ['Seeing ″', (ms) => H[ms].see?.total, seeCls, seeFmt, (ms) => { const s = H[ms].see; return s ? `Zenith ${s.total.toFixed(2)}″ · free air ${s.free.toFixed(2)}″ · mostly ${LAYER_NAME[s.main]}` : ''; }],
+    ['Free air', (ms) => H[ms].see?.free, (v) => grade(v, 1.0, 1.8), seeFmt],
+    ...(t ? [['On target', (ms) => H[ms].tSee, seeCls, seeFmt, (ms) => H[ms].tAlt > 10 ? `${normId(t.mainId || t.name)} at ${H[ms].tAlt.toFixed(0)}° altitude` : 'below 10°']] : []),
+    ['Jet m/s',  jetAt, (v) => grade(v, 25, 42), (v) => Math.round(v)],
+    ['Cool °/h', coolAt, (v) => grade(v, 1, 2), (v) => (v < 0.05 && v > -0.05 ? '0' : v.toFixed(1).replace(/^(-?)0\./, '$1.'))],
+    null,
     ['Humidity', (ms) => val('relative_humidity_2m', ms), (v) => grade(v, 70, 85), (v) => Math.round(v)],
-    ['Dew gap°', (ms) => { const t = val('temperature_2m', ms), d = val('dew_point_2m', ms); return t == null || d == null ? undefined : t - d; },
+    ['Dew gap°', (ms) => { const t2 = val('temperature_2m', ms), d = val('dew_point_2m', ms); return t2 == null || d == null ? undefined : t2 - d; },
                  (v) => grade(v, 4, 2, false), (v) => Math.round(v)],
     ['Gust km/h', (ms) => val('wind_gusts_10m', ms), (v) => grade(v, 15, 30), (v) => Math.round(v)],
-    ['Jet m/s', (ms) => { const v = val('wind_speed_250hPa', ms); return v == null ? undefined : v / 3.6; }, (v) => grade(v, 25, 42), (v) => Math.round(v)],
     ['Dust AOD', (ms) => Aq('aerosol_optical_depth', ms), (v) => grade(v, 0.3, 0.6), (v) => v.toFixed(1).replace(/^0/, '')],
   ];
   let html = `<div class="wxgrid" style="--n:${hours.length}"><div class="lbl"></div>`;
@@ -720,37 +787,50 @@ function renderWeather(w, a, t0, t1) {
   }
   for (const r of rows) {
     if (!r) { html += '<div class="sep"></div>'; continue; }
-    const [label, get, cls, fmt] = r;
+    const [label, get, cls, fmt, tip] = r;
     html += `<div class="lbl">${label}</div>`;
     for (const h of hours) {
       const v = get(h.ms);
-      html += v == null || !isFinite(v) ? '<div>·</div>' : `<div class="${cls(v)}">${fmt(v)}</div>`;
+      const title = tip ? ` title="${esc(tip(h.ms))}"` : '';
+      html += v == null || !isFinite(v) ? '<div>·</div>' : `<div class="${cls(v)}"${title}>${fmt(v)}</div>`;
     }
   }
-  html += '</div><div class="wxnote">Bold hours are astronomical darkness. Dew gap = air temperature minus dew point (under 2° means dew risk). Jet = wind at ~10 km altitude, the main driver of seeing (under 25 m/s is good). AOD = dust/haze; above 0.6 the sky is noticeably milky.</div>';
+  html += `</div><div class="wxnote">Bold hours are astronomical darkness. <b>Seeing</b> is a model estimate (FWHM at 500 nm, zenith) from temperature and wind at 16 heights up to ~16 km; hover a cell for the main turbulent layer.
+    <b>Free air</b> leaves out the lowest 1 km, which depends heavily on your own site. <b>On target</b> adds the extra air at the target's altitude.
+    <b>Jet</b> = strongest wind at 300–200 hPa (9–12 km). <b>Cool</b> = how fast the air is cooling; above 2°/h expect tube currents, so let the scope cool.
+    Dew gap under 2° means dew risk. AOD above 0.6 means a milky, dusty sky.</div>`;
   $('#wx').innerHTML = html;
 
   // Summary over dark hours
   const dark = hours.filter((h) => h.dark);
   const use = dark.length ? dark : hours;
-  const avg = (f) => { const v = use.map((h) => f(h.ms)).filter((x) => x != null && isFinite(x)); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
-  const max = (f) => { const v = use.map((h) => f(h.ms)).filter((x) => x != null && isFinite(x)); return v.length ? Math.max(...v) : null; };
-  const min = (f) => { const v = use.map((h) => f(h.ms)).filter((x) => x != null && isFinite(x)); return v.length ? Math.min(...v) : null; };
+  const pick = (f) => use.map((h) => f(h.ms, h)).filter((x) => x != null && isFinite(x));
+  const avg = (f) => { const v = pick(f); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
+  const max = (f) => { const v = pick(f); return v.length ? Math.max(...v) : null; };
+  const min = (f) => { const v = pick(f); return v.length ? Math.min(...v) : null; };
+  const median = (f) => { const v = pick(f).sort((x, y) => x - y); return v.length ? v[Math.floor(v.length / 2)] : null; };
   const cloud = avg((ms) => val('cloud_cover', ms));
   const hum = max((ms) => val('relative_humidity_2m', ms));
-  const dew = min((ms) => { const t = val('temperature_2m', ms), d = val('dew_point_2m', ms); return t == null || d == null ? null : t - d; });
-  const jet = avg((ms) => { const v = val('wind_speed_250hPa', ms); return v == null ? null : v / 3.6; });
+  const dew = min((ms) => { const t2 = val('temperature_2m', ms), d = val('dew_point_2m', ms); return t2 == null || d == null ? null : t2 - d; });
   const gust = max((ms) => val('wind_gusts_10m', ms));
   const aod = avg((ms) => Aq('aerosol_optical_depth', ms));
+  const seeZ = median((ms, h) => h.see?.total), seeF = median((ms, h) => h.see?.free);
+  const seeT = median((ms, h) => (h.tAlt > 20 ? h.tSee : null));
+  const cool = max(coolAt);
+  const mains = {}; use.forEach((h) => { if (h.see) mains[h.see.main] = (mains[h.see.main] || 0) + 1; });
+  const mainLayer = Object.entries(mains).sort((x, y) => y[1] - x[1])[0]?.[0];
+  state.fcSeeing = seeT ?? seeZ;
+  renderRigStats();
   if (cloud == null) { $('#wxSum').innerHTML = '<span class="note">No forecast data for this night.</span>'; return; }
-  const tag = (c, t) => `<span class="tag ${c}">${t}</span>`;
+  const tag = (c, txt) => `<span class="tag ${c}">${txt}</span>`;
   const sky = cloud < 20 ? tag('good', 'clear') : cloud < 50 ? tag('warn', 'partly cloudy') : tag('bad', 'cloudy');
-  const seeing = jet == null ? '—' : jet < 25 ? tag('good', 'likely good') : jet < 42 ? tag('warn', 'average') : tag('bad', 'likely poor');
+  const seeTag = (v) => v == null ? '—' : tag(v < 1.5 ? 'good' : v < 2.5 ? 'warn' : 'bad', (v >= 6 ? '6+' : v.toFixed(1)) + '″');
   const transp = aod == null ? '—' : aod < 0.3 ? tag('good', 'good') : aod < 0.6 ? tag('warn', 'hazy') : tag('bad', 'dusty');
   const wind = gust == null ? '' : gust < 15 ? '' : gust < 30 ? ` · gusts to ${Math.round(gust)} km/h` : ` · ${tag('bad', 'windy')} gusts ${Math.round(gust)} km/h`;
   const dewTxt = dew != null && dew < 2 ? ` · ${tag('bad', 'dew risk')}` : hum != null && hum > 85 ? ` · ${tag('warn', 'humid')}` : '';
-  $('#wxSum').innerHTML = `${dark.length ? 'Dark hours' : 'Tonight'}: ${sky} ${cloud.toFixed(0)}% cloud · Seeing ${seeing} <span class="note">(jet stream ${jet != null ? Math.round(jet) : '—'} m/s)</span><br>
-    Transparency ${transp} <span class="note">(AOD ${aod != null ? aod.toFixed(2) : '—'})</span>${wind}${dewTxt}`;
+  const coolTxt = cool != null && cool > 2 ? ` · ${tag('warn', 'fast cooling')} let the scope cool` : '';
+  $('#wxSum').innerHTML = `${dark.length ? 'Dark hours' : 'Tonight'}: ${sky} ${cloud.toFixed(0)}% cloud · Transparency ${transp} <span class="note">(AOD ${aod != null ? aod.toFixed(2) : '—'})</span><br>
+    Seeing ${seeTag(seeZ)} zenith <span class="note">(free air ${seeF != null ? seeF.toFixed(1) + '″' : '—'})</span>${t && seeT != null ? ` · ${seeTag(seeT)} on ${esc(normId(t.mainId || t.name))}` : ''}${mainLayer ? `<br><span class="note">Main turbulence: ${LAYER_NAME[mainLayer]}</span>` : ''}${wind}${dewTxt}${coolTxt}`;
 }
 function renderWxLinks() {
   const { lat, lon } = state.site;
@@ -812,6 +892,8 @@ for (const id of ['szMaj', 'szMin', 'szPa']) $('#' + id).addEventListener('input
 $('#survey').value = state.survey;
 $('#survey').addEventListener('change', (e) => { state.survey = e.target.value; saveStore(); aladin?.setImageSurvey(state.survey); });
 $('#seeing').value = state.seeing;
+$('#useFc').checked = state.useFcSeeing;
+$('#useFc').addEventListener('change', (e) => { state.useFcSeeing = e.target.checked; saveStore(); renderRigStats(); });
 $('#seeing').addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (v > 0) { state.seeing = v; saveStore(); renderRigStats(); } });
 for (const k of ['lat', 'lon', 'tz']) {
   $('#' + k).value = state.site[k];
