@@ -13,16 +13,7 @@ Plan astrophotography framing with **several telescope + camera combinations ove
 - Sky surveys: DSS2, Pan-STARRS, 2MASS, H-alpha, Mellinger
 - Editable equipment list. Rigs and settings are saved in your browser.
 
-Single file (`index.html`), no build step. Uses [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) from jsDelivr.
-
-## Host on GitHub Pages
-
-1. Create a new public repository, e.g. `fov-planner`.
-2. Upload `index.html` (and this README) to the repository root.
-3. Go to **Settings → Pages**, set Source to **Deploy from a branch**, then pick branch `main` and folder `/ (root)`.
-4. After a minute the site is live at `https://<your-username>.github.io/fov-planner/`.
-
-Link straight to a target with a hash: `.../fov-planner/#NGC%207000`.
+Uses [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) from jsDelivr.
 
 ## Notes
 
