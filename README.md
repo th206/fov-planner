@@ -1,5 +1,6 @@
 # Multi-Rig FOV Planner
-
+[Try it out!] (https://th206.github.io/fov-planner/)
+<br>
 Plan astrophotography framing with **several telescope + camera combinations overlaid on the same target at once**.
 
 - Search any object by name (M31, NGC 7000, "Pelican Nebula") or coordinates (`20 58 47 +44 20` or `314.7 44.3`)
@@ -17,16 +18,7 @@ Plan astrophotography framing with **several telescope + camera combinations ove
 - Editable equipment list. Rigs and settings are saved in your browser
 - Export / Import backup (optionally with your images) to keep a copy, move your setup to another device, or share it with friends
 
-Single file (`index.html`), no build step. Object catalog from [OpenNGC](https://github.com/mattiaverga/OpenNGC) (CC-BY-SA 4.0) and the Sharpless (1959) catalog; Lynds dark (LDN) and bright (LBN) nebulae and Green's Galactic SNR catalogue (2025, optically visible remnants only) are loaded live from [VizieR](https://vizier.cds.unistra.fr/) and cached for 90 days. Uses [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) from jsDelivr.
-
-## Host on GitHub Pages
-
-1. Create a new public repository, e.g. `fov-planner`.
-2. Upload `index.html` (and this README) to the repository root.
-3. Go to **Settings → Pages**, set Source to **Deploy from a branch**, then pick branch `main` and folder `/ (root)`.
-4. After a minute the site is live at `https://<your-username>.github.io/fov-planner/`.
-
-Link straight to a target with a hash: `.../fov-planner/#NGC%207000`.
+Object catalog from [OpenNGC](https://github.com/mattiaverga/OpenNGC) (CC-BY-SA 4.0) and the Sharpless (1959) catalog; Lynds dark (LDN) and bright (LBN) nebulae and Green's Galactic SNR catalogue (2025, optically visible remnants only) are loaded live from [VizieR](https://vizier.cds.unistra.fr/) and cached for 90 days. Uses [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) from jsDelivr.
 
 ## Notes
 
