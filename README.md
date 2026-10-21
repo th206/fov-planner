@@ -1,5 +1,5 @@
 # Multi-Rig FOV Planner
-
+[Try the app](https://th206.github.io/fov-planner/)
 Plan astrophotography framing with **several telescope + camera combinations overlaid on the same target at once**.
 
 - Search any object by name (M31, NGC 7000, "Pelican Nebula") or coordinates (`20 58 47 +44 20` or `314.7 44.3`)
