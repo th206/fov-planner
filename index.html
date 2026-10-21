@@ -60,7 +60,11 @@
   #hud { position: absolute; left: 10px; bottom: 44px; background: rgba(10,13,20,.78); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none; z-index: 20; }
   #boostBox { position: absolute; left: 50%; transform: translateX(-50%); top: 10px; z-index: 20; display: flex; align-items: center; gap: 8px;
     background: rgba(10,13,20,.78); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; font-size: 12px; color: var(--muted); }
-  #boostBox input { width: 120px; accent-color: var(--accent); }
+  #boostBox input { width: 110px; accent-color: var(--accent); }
+  #boostBox select { padding: 3px 6px; font-size: 12px; max-width: 150px; }
+  #surveyCredit { position: absolute; right: 10px; top: 52px; z-index: 20; font-size: 10.5px; color: var(--muted); background: rgba(10,13,20,.7); padding: 2px 6px; border-radius: 5px; pointer-events: auto; }
+  #surveyCredit a { color: var(--muted); }
+  @media (max-width: 600px) { #boostBox span { display: none; } #boostBox input { width: 80px; } }
   .img-row { display: flex; flex-direction: column; gap: 5px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--panel-2); }
   .img-row + .img-row { margin-top: 6px; }
   .img-row .top { display: flex; align-items: center; gap: 6px; }
@@ -237,13 +241,24 @@
       <div class="row">
         <label>Survey
           <select id="survey">
-            <option value="CDS/P/DSS2/color">DSS2 color</option>
-            <option value="CDS/P/PanSTARRS/DR1/color-z-zg-g">Pan-STARRS DR1 color</option>
-            <option value="CDS/P/DSS2/red">DSS2 red</option>
-            <option value="CDS/P/2MASS/color">2MASS color (IR)</option>
-            <option value="CDS/P/Finkbeiner">H-alpha (Finkbeiner)</option>
-            <option value="CDS/P/VTSS/Ha">H-alpha (VTSS)</option>
-            <option value="CDS/P/Mellinger/color">Mellinger color (wide)</option>
+            <option value="auto">Auto (narrowband for nebulae)</option>
+            <optgroup label="Narrowband (show faint nebulae)">
+              <option value="https://www.simg.de/nebulae3/dr0_2/ohs8">NSNS [OIII]·Hα·[SII] color</option>
+              <option value="https://www.simg.de/nebulae3/dr0_2/halpha8">NSNS Hα</option>
+              <option value="https://www.simg.de/nebulae3/dr0_2/oiii8">NSNS [OIII]</option>
+              <option value="CDS/P/IPHAS/DR2/halpha">IPHAS Hα (Milky Way, sharp)</option>
+            </optgroup>
+            <optgroup label="Broadband">
+              <option value="CDS/P/DSS2/color">DSS2 color</option>
+              <option value="CDS/P/PanSTARRS/DR1/color-z-zg-g">Pan-STARRS DR1 color</option>
+              <option value="CDS/P/DSS2/red">DSS2 red</option>
+              <option value="CDS/P/2MASS/color">2MASS color (IR)</option>
+              <option value="CDS/P/Mellinger/color">Mellinger color (wide)</option>
+            </optgroup>
+            <optgroup label="Wide-field Hα">
+              <option value="CDS/P/Finkbeiner">H-alpha (Finkbeiner)</option>
+              <option value="CDS/P/VTSS/Ha">H-alpha (VTSS)</option>
+            </optgroup>
           </select>
         </label>
         <label>Seeing ″ <input id="seeing" class="num" type="number" step="0.1" min="0.5"></label>
@@ -270,7 +285,9 @@
   <main>
     <div id="aladin"></div>
     <div id="hud"></div>
+    <div id="surveyCredit"></div>
     <div id="boostBox" title="Stretch the survey to bring out faint nebulosity">
+      <select id="survey2" aria-label="Sky survey" title="Sky survey"></select>
       <span>✦ Faint detail</span>
       <input type="range" id="boost" min="0" max="100" step="1" aria-label="Faint detail boost">
     </div>
@@ -348,7 +365,7 @@ const state = {
   scopes: saved.scopes || structuredClone(DEFAULT_SCOPES),
   cams: saved.cams || structuredClone(DEFAULT_CAMS),
   rigs: saved.rigs || structuredClone(DEFAULT_RIGS),
-  survey: (saved.survey || 'CDS/P/DSS2/color').replace(/^P\//, 'CDS/P/'),
+  survey: (saved.survey || 'auto').replace(/^P\//, 'CDS/P/'),
   seeing: saved.seeing || 2.0,
   defaultSite: saved.defaultSite || { name: 'Doha, Qatar', ...(saved.site || { lat: 25.29, lon: 51.53, tz: 3 }) },
   site: null,
@@ -437,7 +454,7 @@ let aladin, rigOv, tgtOv;
 async function initAladin() {
   await A.init;
   aladin = A.aladin('#aladin', {
-    survey: state.survey, fov: 3, target: `${state.center[0]} ${state.center[1]}`,
+    survey: effectiveSurvey(), fov: 3, target: `${state.center[0]} ${state.center[1]}`,
     projection: 'TAN', cooFrame: 'ICRS', showReticle: false, showGotoControl: false,
     showProjectionControl: false, showFullscreenControl: true, showCooGridControl: true,
     showSimbadPointerControl: true, showContextMenu: true, showFrame: false,
@@ -452,7 +469,7 @@ async function initAladin() {
     if (!p.dragging) scheduleImageRefresh();
   });
   aladin.on('zoomChanged', () => { updateHud(); scheduleImageRefresh(); });
-  drawFrames(); updateHud(); applyBoost(); renderImageList();
+  shownSurvey = effectiveSurvey(); drawFrames(); updateHud(); applyBoost(); applySurvey(); renderImageList();
 }
 
 function drawFrames() {
@@ -506,6 +523,37 @@ function updateLegend() {
 }
 
 /* ---------- Faint-detail boost (stretch the survey) ---------- */
+// Sky survey choice. "auto" = narrowband (NSNS) for emission targets in its northern coverage, DSS color otherwise
+const NARROW_TYPES = new Set(['HII', 'EmN', 'Neb', 'Cl+N', 'Sh2', 'SNR', 'PN', 'LBN']);
+const SURVEY_NAMES = {};
+function effectiveSurvey() {
+  if (state.survey !== 'auto') return state.survey;
+  const t = state.target; if (!t) return 'CDS/P/DSS2/color';
+  const co = CAT_INDEX.get(catKey(t.mainId || t.name || ''));
+  const typ = co?.t || ({ HII: 'HII', SNR: 'SNR', PN: 'PN', ISM: 'Neb', EmO: 'EmN', RNe: 'Neb', Cld: 'Neb', GNe: 'Neb', SFR: 'Neb', MoC: 'Neb' })[t.otype];
+  return NARROW_TYPES.has(typ) && t.dec > -15 ? 'https://www.simg.de/nebulae3/dr0_2/ohs8' : 'CDS/P/DSS2/color';
+}
+let shownSurvey = null;
+function applySurvey(force) {
+  const id = effectiveSurvey();
+  if (aladin && (force || id !== shownSurvey)) {
+    shownSurvey = id;
+    try { aladin.setImageSurvey(id); } catch (e) { console.warn(e); }
+    setTimeout(applyBoost, 400); setTimeout(applyBoost, 1500);
+  }
+  const nb = id.includes('simg.de');
+  $('#surveyCredit').innerHTML = nb ? 'Narrowband: <a href="http://www.simg.de/nebulae3/dr0_2/" target="_blank" rel="noopener">NSNS, S. Ziegenbalg</a> (CC BY-NC-SA)'
+    : id.includes('IPHAS') ? 'Hα: IPHAS DR2' : '';
+  $('#surveyCredit').style.display = $('#surveyCredit').innerHTML ? '' : 'none';
+  const lbl = state.survey === 'auto' ? `Auto · ${nb ? 'narrowband' : 'DSS'}` : null;
+  const o = $('#survey2 option[value="auto"]'); if (o) o.textContent = lbl || 'Auto';
+}
+function setSurveyChoice(v) {
+  state.survey = v; saveStore();
+  $('#survey').value = v; $('#survey2').value = v;
+  applySurvey();
+}
+
 function applyBoost() {
   if (!aladin) return;
   const L = aladin.getBaseImageLayer(); if (!L) return;
@@ -923,6 +971,7 @@ function setTarget(t, size, label) {
   $('#q').value = label; $('#status').textContent = '';
   if (aladin) aladin.gotoRaDec(t.ra, t.dec);
   renderTarget(); drawTarget(); fitView(); drawFrames(); renderRigStats(); drawAltChart(); rerenderWeather(); updateHud();
+  if (state.survey === 'auto') applySurvey();
 }
 /* ---------- Tonight's targets: catalog ranked for your rigs ---------- */
 // Catalog: OpenNGC (CC-BY-SA 4.0, Mattia Verga) + Sharpless 1959 (VizieR VII/20). Rows: id, alt ids, common name, type, ra, dec, maj′, min′, pa, mag
@@ -1630,10 +1679,12 @@ $('#follow').addEventListener('change', (e) => {
   drawFrames(); updateHud();
 });
 for (const id of ['szMaj', 'szMin', 'szPa']) $('#' + id).addEventListener('input', onSizeInput);
-$('#survey').value = state.survey;
+$('#survey2').innerHTML = $('#survey').innerHTML;
+$('#survey').value = state.survey; $('#survey2').value = state.survey;
+$('#survey2').addEventListener('change', (e) => setSurveyChoice(e.target.value));
 $('#boost').value = state.boost;
 $('#boost').addEventListener('input', (e) => { state.boost = +e.target.value; applyBoost(); saveStore(); });
-$('#survey').addEventListener('change', (e) => { state.survey = e.target.value; saveStore(); aladin?.setImageSurvey(state.survey); setTimeout(applyBoost, 300); setTimeout(applyBoost, 1500); });
+$('#survey').addEventListener('change', (e) => setSurveyChoice(e.target.value));
 $('#seeing').value = state.seeing;
 $('#useFc').checked = state.useFcSeeing;
 $('#useFc').addEventListener('change', (e) => { state.useFcSeeing = e.target.checked; saveStore(); renderRigStats(); });
