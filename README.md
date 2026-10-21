@@ -6,7 +6,7 @@ Plan astrophotography framing with **several telescope + camera combinations ove
 - Object details from SIMBAD: type, coordinates, apparent size, magnitude
 - One colored frame per rig, each with its own rotation, reducer factor and mosaic (cols × rows, overlap %)
 - Per-rig FOV, image scale (″/px), sampling vs. your seeing, and whether the target fits
-- **Tonight's targets, filtered for your rigs**: ~1,500 objects (OpenNGC + Sharpless) ranked for the chosen night and place. Targets too small for a rig (below a minimum frame fill) or needing more mosaic panels than you allow are hidden. Shows fit (% of frame, or mosaic size), usable dark hours above your minimum altitude, peak altitude and Moon; galaxies and clusters can count only moon-free hours. Click to load; mosaics set the rig's grid and rotation
+- **Tonight's targets, filtered for your rigs**: ~2,200 objects ranked for the chosen night and place. Targets too small for a rig (below a minimum frame fill) or needing more mosaic panels than you allow are hidden. Shows fit (% of frame, or mosaic size), usable dark hours above your minimum altitude, peak altitude and Moon; galaxies and clusters can count only moon-free hours. Categories: galaxies, nebulae, Lynds bright nebulae (LBN), Lynds dark nebulae (LDN), supernova remnants, planetary nebulae, clusters. Pick a target to load it; mosaics set the rig's grid and rotation
 - Altitude chart for any night, with twilight shading and hours above 30° in astronomical darkness
 - Conditions for any place: search by name or coordinates, or use your device location, and save one place as the default
 - Night forecast from [Open-Meteo](https://open-meteo.com/): hourly cloud (low/mid/high), humidity, dew risk, wind gusts and dust/haze (aerosol optical depth)
@@ -17,7 +17,7 @@ Plan astrophotography framing with **several telescope + camera combinations ove
 - Editable equipment list. Rigs and settings are saved in your browser
 - Export / Import backup (optionally with your images) to keep a copy, move your setup to another device, or share it with friends
 
-Single file (`index.html`), no build step. Object catalog from [OpenNGC](https://github.com/mattiaverga/OpenNGC) (CC-BY-SA 4.0) and the Sharpless (1959) catalog via VizieR. Uses [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) from jsDelivr.
+Single file (`index.html`), no build step. Object catalog from [OpenNGC](https://github.com/mattiaverga/OpenNGC) (CC-BY-SA 4.0) and the Sharpless (1959) catalog; Lynds dark (LDN) and bright (LBN) nebulae and Green's Galactic SNR catalogue (2025, optically visible remnants only) are loaded live from [VizieR](https://vizier.cds.unistra.fr/) and cached for 90 days. Uses [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) from jsDelivr.
 
 ## Host on GitHub Pages
 
