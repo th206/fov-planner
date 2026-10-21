@@ -58,6 +58,15 @@
   .tag.warn { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
   .tag.bad  { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
   #hud { position: absolute; left: 10px; bottom: 44px; background: rgba(10,13,20,.78); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none; z-index: 20; }
+  #boostBox { position: absolute; left: 50%; transform: translateX(-50%); top: 10px; z-index: 20; display: flex; align-items: center; gap: 8px;
+    background: rgba(10,13,20,.78); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; font-size: 12px; color: var(--muted); }
+  #boostBox input { width: 120px; accent-color: var(--accent); }
+  .img-row { display: flex; flex-direction: column; gap: 5px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--panel-2); }
+  .img-row + .img-row { margin-top: 6px; }
+  .img-row .top { display: flex; align-items: center; gap: 6px; }
+  .img-row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
+  .img-row input[type=range] { flex: 1; accent-color: var(--accent); }
+  .img-row .tag { font-weight: 500; }
   #legend { position: absolute; right: 10px; bottom: 44px; background: rgba(10,13,20,.78); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12px; z-index: 20; pointer-events: none; }
   #legend div { display: flex; align-items: center; gap: 6px; }
   #legend i { width: 14px; height: 3px; background: var(--c); display: inline-block; border-radius: 2px; }
@@ -173,6 +182,16 @@
     </section>
 
     <section class="card">
+      <h2>My images <span class="row"><button class="icon" id="imgAddBtn" title="Add plate-solved images">+ Add</button></span></h2>
+      <input type="file" id="imgFile" multiple hidden accept=".jpg,.jpeg,.png,.fits,.fit,.fts,.wcs,.ini,.txt">
+      <div id="imgList"></div>
+      <div id="imgMsg" class="note"></div>
+      <div class="wxnote">Overlay your own plate-solved images. Select the image <b>and</b> its solve file together:
+        astrometry.net <code>wcs.fits</code>, ASTAP <code>.wcs</code>, or a FITS image with WCS in its header (PixInsight, Siril).
+        Images stay in this browser and show up whenever their part of the sky is in view.</div>
+    </section>
+
+    <section class="card">
       <h2>Settings</h2>
       <div class="row">
         <label>Survey
@@ -201,6 +220,10 @@
   <main>
     <div id="aladin"></div>
     <div id="hud"></div>
+    <div id="boostBox" title="Stretch the survey to bring out faint nebulosity">
+      <span>✦ Faint detail</span>
+      <input type="range" id="boost" min="0" max="100" step="1" aria-label="Faint detail boost">
+    </div>
     <div id="legend"></div>
     <div id="fatal"></div>
   </main>
@@ -266,7 +289,7 @@ function saveStore() {
   try {
     localStorage.setItem(KEY, JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow,
+      boost: state.boost, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow,
     }));
   } catch { /* storage unavailable */ }
 }
@@ -281,6 +304,7 @@ const state = {
   site: null,
   follow: saved.follow ?? true,
   useFcSeeing: saved.useFcSeeing ?? true,
+  boost: saved.boost ?? 30,
   fcSeeing: null,
   target: null,          // {name, ra, dec, ...}
   size: null,            // {maj, min, pa} arcmin
@@ -373,9 +397,10 @@ async function initAladin() {
   aladin.on('positionChanged', (p) => {
     if (state.follow) state.center = [p.ra, p.dec];
     drawFrames(); updateHud();
+    if (!p.dragging) scheduleImageRefresh();
   });
-  aladin.on('zoomChanged', updateHud);
-  drawFrames(); updateHud();
+  aladin.on('zoomChanged', () => { updateHud(); scheduleImageRefresh(); });
+  drawFrames(); updateHud(); applyBoost(); renderImageList();
 }
 
 function drawFrames() {
@@ -427,6 +452,227 @@ function updateLegend() {
   $('#legend').innerHTML = rows.join('');
   $('#legend').style.display = rows.length ? '' : 'none';
 }
+
+/* ---------- Faint-detail boost (stretch the survey) ---------- */
+function applyBoost() {
+  if (!aladin) return;
+  const L = aladin.getBaseImageLayer(); if (!L) return;
+  const b = (state.boost || 0) / 100;
+  try {
+    L.setCuts(Math.round(22 * b), Math.round(255 - 180 * b));
+    L.setSaturation(0.5 * b);
+  } catch { /* some surveys don't support cuts */ }
+}
+
+/* ---------- My images: plate-solved overlays stored in IndexedDB ---------- */
+const IMG_DB = 'mrp-images', IMG_STORE = 'images';
+let imgDbP = null;
+function imgDb() {
+  if (!imgDbP) imgDbP = new Promise((res, rej) => {
+    const r = indexedDB.open(IMG_DB, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore(IMG_STORE, { keyPath: 'id' });
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  return imgDbP;
+}
+async function imgTx(mode, fn) {
+  const db = await imgDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(IMG_STORE, mode), st = tx.objectStore(IMG_STORE);
+    const out = fn(st);
+    tx.oncomplete = () => res(out?.result ?? out); tx.onerror = () => rej(tx.error);
+  });
+}
+const imgAll = () => imgTx('readonly', (st) => st.getAll());
+const imgPut = (rec) => imgTx('readwrite', (st) => st.put(rec));
+const imgDel = (id) => imgTx('readwrite', (st) => st.delete(id));
+
+// Parse FITS header cards from bytes (FITS file, astrometry.net wcs.fits, ASTAP .wcs text)
+function parseFitsHeader(buf) {
+  const bytes = new Uint8Array(buf);
+  let text = '';
+  for (let i = 0; i < Math.min(bytes.length, 2880 * 40); i++) text += String.fromCharCode(bytes[i]);
+  const cards = /\r?\n/.test(text.slice(0, 2000)) ? text.split(/\r?\n/) : text.match(/.{1,80}/gs) || [];
+  const h = {};
+  for (const c of cards) {
+    const key = c.slice(0, 8).trim();
+    if (key === 'END') break;
+    if (c[8] !== '=' || !key) continue;
+    let v = c.slice(10);
+    const sq = v.match(/^\s*'((?:[^']|'')*)'/);
+    if (sq) h[key] = sq[1].replace(/''/g, "'").trim();
+    else { v = v.split('/')[0].trim(); const n = Number(v); h[key] = v === 'T' ? true : v === 'F' ? false : isFinite(n) && v !== '' ? n : v; }
+  }
+  return h;
+}
+// Normalise any WCS flavour to a plain TAN projection with a CD matrix (SIP distortion dropped)
+function linearWcs(h) {
+  if (h.CRVAL1 == null || h.CRVAL2 == null || h.CRPIX1 == null || h.CRPIX2 == null) return null;
+  let cd;
+  if (h.CD1_1 != null) cd = [h.CD1_1 || 0, h.CD1_2 || 0, h.CD2_1 || 0, h.CD2_2 || 0];
+  else if (h.CDELT1 != null) {
+    const c1 = h.CDELT1, c2 = h.CDELT2 ?? h.CDELT1;
+    if (h.PC1_1 != null) cd = [c1 * h.PC1_1, c1 * (h.PC1_2 || 0), c2 * (h.PC2_1 || 0), c2 * h.PC2_2];
+    else { const r = (h.CROTA2 || 0) * D2R; cd = [c1 * Math.cos(r), -c2 * Math.sin(r), c1 * Math.sin(r), c2 * Math.cos(r)]; }
+  } else return null;
+  return { crval: [h.CRVAL1, h.CRVAL2], crpix: [h.CRPIX1, h.CRPIX2], cd,
+    w: h.IMAGEW || h.NAXIS1 || null, h: h.IMAGEH || h.NAXIS2 || null };
+}
+function scaleWcs(w, f) {
+  return { ...w, crpix: [(w.crpix[0] - 0.5) * f + 0.5, (w.crpix[1] - 0.5) * f + 0.5], cd: w.cd.map((x) => x / f), w: Math.round(w.w * f), h: Math.round(w.h * f) };
+}
+function flipWcs(w) { // mirror the y axis (top-down vs bottom-up row order)
+  return { ...w, crpix: [w.crpix[0], w.h + 1 - w.crpix[1]], cd: [w.cd[0], -w.cd[1], w.cd[2], -w.cd[3]] };
+}
+function pix2sky(w, x, y) {
+  const dx = x - w.crpix[0], dy = y - w.crpix[1];
+  const xi = (w.cd[0] * dx + w.cd[1] * dy) * D2R, eta = (w.cd[2] * dx + w.cd[3] * dy) * D2R;
+  return deproj(w.crval[0], w.crval[1], xi, eta);
+}
+function toAladinWcs(w) {
+  return { NAXIS: 2, NAXIS1: w.w, NAXIS2: w.h, CTYPE1: 'RA---TAN', CTYPE2: 'DEC--TAN', RADESYS: 'ICRS', EQUINOX: 2000,
+    CRVAL1: w.crval[0], CRVAL2: w.crval[1], CRPIX1: w.crpix[0], CRPIX2: w.crpix[1],
+    CD1_1: w.cd[0], CD1_2: w.cd[1], CD2_1: w.cd[2], CD2_2: w.cd[3] };
+}
+function imgFootprint(w) {
+  const [ra, dec] = pix2sky(w, (w.w + 1) / 2, (w.h + 1) / 2);
+  const corners = [[0.5, 0.5], [w.w + 0.5, 0.5], [w.w + 0.5, w.h + 0.5], [0.5, w.h + 0.5]].map(([x, y]) => pix2sky(w, x, y));
+  const radius = Math.max(...corners.map(([r, d]) => angSep(ra, dec, r, d)));
+  const scale = Math.hypot(w.cd[0], w.cd[2]) * 3600;
+  return { ra, dec, radius, scale };
+}
+async function loadBitmap(blob) {
+  if (window.createImageBitmap) return createImageBitmap(blob);
+  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(blob); });
+}
+const baseName = (n) => n.replace(/\.(jpe?g|png|fits?|fts|wcs|ini|txt)$/i, '').replace(/[._-]?wcs$/i, '').toLowerCase();
+const isPic = (f) => /\.(jpe?g|png)$/i.test(f.name), isFits = (f) => /\.(fits?|fts)$/i.test(f.name), isWcsText = (f) => /\.(wcs|ini|txt)$/i.test(f.name);
+
+async function addImageFiles(files) {
+  files = [...files];
+  const msg = (t) => { $('#imgMsg').textContent = t; };
+  const pics = files.filter(isPic), fits = files.filter(isFits), wcsTxt = files.filter(isWcsText);
+  const headers = [];
+  for (const f of [...fits, ...wcsTxt]) {
+    const h = parseFitsHeader(await f.slice(0, 2880 * 40).arrayBuffer());
+    headers.push({ f, h, hasData: isFits(f) && (h.NAXIS || 0) >= 2 && (h.NAXIS1 || 0) > 16 && !h.IMAGEW });
+  }
+  let added = 0; const problems = [];
+  // 1) JPG/PNG + solve file
+  for (const pic of pics) {
+    const bn = baseName(pic.name);
+    let hdr = headers.find((x) => !x.hasData && baseName(x.f.name) === bn)
+      || (pics.length === 1 ? headers.find((x) => !x.hasData) || headers.find((x) => x.hasData) : null);
+    const w0 = hdr && linearWcs(hdr.h);
+    if (!w0) { problems.push(`${pic.name}: no plate solution found`); continue; }
+    try {
+      msg(`Adding ${pic.name}…`);
+      const bmp = await loadBitmap(pic);
+      let w = { ...w0, w: w0.w || bmp.width, h: w0.h || bmp.height };
+      if (w.w !== bmp.width) w = scaleWcs(w, bmp.width / w.w);
+      // store at most 4096 px on the long side
+      const f = Math.min(1, 4096 / Math.max(bmp.width, bmp.height));
+      const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * f); cv.height = Math.round(bmp.height * f);
+      cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+      if (f < 1) w = scaleWcs(w, cv.width / w.w);
+      const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.9));
+      const fp = imgFootprint(w);
+      await imgPut({ id: newId(), name: pic.name.replace(/\.[^.]+$/, ''), blob, fmt: 'jpeg', wcs: w, flip: false, ...fp, on: true, opacity: 0.85, added: Date.now() });
+      added++;
+    } catch (e) { problems.push(`${pic.name}: could not read the image`); }
+  }
+  // 2) FITS images that carry their own WCS
+  for (const x of headers.filter((x) => x.hasData)) {
+    if (pics.length === 1 && !headers.some((y) => !y.hasData)) continue; // used as the solve file above
+    const w0 = linearWcs(x.h);
+    if (!w0) { problems.push(`${x.f.name}: no WCS in the header`); continue; }
+    if (x.f.size > 150e6) { problems.push(`${x.f.name}: too large (export a JPG plus solve file instead)`); continue; }
+    const w = { ...w0, w: x.h.NAXIS1, h: x.h.NAXIS2 };
+    await imgPut({ id: newId(), name: x.f.name.replace(/\.[^.]+$/, ''), blob: x.f, fmt: 'fits', wcs: w, flip: false, ...imgFootprint(w), on: true, opacity: 0.85, added: Date.now() });
+    added++;
+  }
+  if (!pics.length && !headers.some((x) => x.hasData)) problems.push('Select the image together with its solve file.');
+  msg((added ? `Added ${added} image${added > 1 ? 's' : ''}. ` : '') + problems.join(' · '));
+  await renderImageList(); refreshImageLayers(true);
+}
+
+let imgCache = [];            // records from IndexedDB
+const imgShown = new Map();   // id -> {layer, flip}
+const imgUrls = new Map();
+const imgLayerName = (id) => 'img-' + id;
+function inView(rec) {
+  if (!aladin) return false;
+  const [ra, dec] = aladin.getRaDec(); const fov = aladin.getFov();
+  return angSep(ra, dec, rec.ra, rec.dec) < rec.radius + Math.hypot(fov[0], fov[1]) / 2;
+}
+function refreshImageLayers(force) {
+  if (!aladin) return;
+  for (const rec of imgCache) {
+    const want = rec.on && inView(rec), cur = imgShown.get(rec.id);
+    if (want && (!cur || cur.flip !== rec.flip || force && cur.stale)) {
+      if (cur) aladin.removeImageLayer(cur.layer);
+      if (!imgUrls.has(rec.id)) imgUrls.set(rec.id, URL.createObjectURL(rec.blob));
+      const opts = { name: rec.name, imgFormat: rec.fmt, successCallback: () => {}, errorCallback: () => { $('#imgMsg').textContent = `Could not display ${rec.name}.`; } };
+      if (rec.fmt !== 'fits' || rec.flip) opts.wcs = toAladinWcs(rec.flip ? flipWcs(rec.wcs) : rec.wcs);
+      const img = A.image(imgUrls.get(rec.id), opts);
+      aladin.setOverlayImageLayer(img, imgLayerName(rec.id));
+      try { img.setOpacity(rec.opacity); } catch {}
+      imgShown.set(rec.id, { layer: imgLayerName(rec.id), flip: rec.flip, img });
+    } else if (!want && cur) {
+      aladin.removeImageLayer(cur.layer); imgShown.delete(rec.id);
+    }
+  }
+  for (const el of document.querySelectorAll('.img-row')) {
+    const rec = imgCache.find((r) => r.id === el.dataset.id);
+    el.querySelector('[data-view]').innerHTML = rec && inView(rec) ? '<span class="tag good">in view</span>' : '';
+  }
+}
+let imgTimer;
+const scheduleImageRefresh = () => { clearTimeout(imgTimer); imgTimer = setTimeout(() => refreshImageLayers(false), 400); };
+async function renderImageList() {
+  try { imgCache = (await imgAll()).sort((a, b) => b.added - a.added); } catch { imgCache = []; $('#imgMsg').textContent = 'This browser is blocking local storage, so images cannot be saved.'; }
+  $('#imgList').innerHTML = imgCache.map((r) => `
+    <div class="img-row" data-id="${r.id}">
+      <div class="top">
+        <input type="checkbox" data-k="on" ${r.on ? 'checked' : ''} title="Show / hide">
+        <span class="nm" title="${esc(r.name)}">${esc(r.name)}</span>
+        <span data-view></span>
+        <button class="icon ghost" data-act="go" title="Go to this image">⌖</button>
+        <button class="icon ghost" data-act="del" title="Delete from library">✕</button>
+      </div>
+      <div class="top">
+        <span class="note">${fmtAngle(r.radius * 2 / Math.SQRT2)} · ${r.scale.toFixed(2)}″/px</span>
+        <input type="range" min="0.1" max="1" step="0.05" data-k="opacity" value="${r.opacity}" title="Opacity">
+        <label class="note" title="Use if the stars don't line up (image upside down)"><input type="checkbox" data-k="flip" ${r.flip ? 'checked' : ''}> flip</label>
+      </div>
+    </div>`).join('');
+  refreshImageLayers(false);
+}
+$('#imgAddBtn').addEventListener('click', () => $('#imgFile').click());
+$('#imgFile').addEventListener('change', (e) => { const f = e.target.files; if (f?.length) addImageFiles(f); e.target.value = ''; });
+$('#imgList').addEventListener('input', async (e) => {
+  const row = e.target.closest('.img-row'); if (!row) return;
+  const rec = imgCache.find((r) => r.id === row.dataset.id); const k = e.target.dataset.k; if (!rec || !k) return;
+  if (k === 'opacity') { rec.opacity = +e.target.value; try { imgShown.get(rec.id)?.img.setOpacity(rec.opacity); } catch {} }
+  else rec[k] = e.target.checked;
+  await imgPut(rec); refreshImageLayers(false);
+});
+$('#imgList').addEventListener('click', async (e) => {
+  const act = e.target.dataset.act; if (!act) return;
+  const id = e.target.closest('.img-row').dataset.id; const rec = imgCache.find((r) => r.id === id); if (!rec) return;
+  if (act === 'go') {
+    state.center = [rec.ra, rec.dec]; aladin?.gotoRaDec(rec.ra, rec.dec); aladin?.setFoV(Math.max(0.2, rec.radius * 2.6));
+    rec.on = true; await imgPut(rec); renderImageList();
+  } else if (act === 'del') {
+    if (!confirm(`Delete “${rec.name}” from your image library?`)) return;
+    const cur = imgShown.get(id); if (cur) { aladin?.removeImageLayer(cur.layer); imgShown.delete(id); }
+    if (imgUrls.has(id)) { URL.revokeObjectURL(imgUrls.get(id)); imgUrls.delete(id); }
+    await imgDel(id); renderImageList();
+  }
+});
+// drag & drop onto the map
+$('main').addEventListener('dragover', (e) => { e.preventDefault(); });
+$('main').addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer?.files?.length) addImageFiles(e.dataTransfer.files); });
 
 /* ---------- Name resolution & details ---------- */
 function parseCoords(q) {
@@ -977,7 +1223,9 @@ $('#follow').addEventListener('change', (e) => {
 });
 for (const id of ['szMaj', 'szMin', 'szPa']) $('#' + id).addEventListener('input', onSizeInput);
 $('#survey').value = state.survey;
-$('#survey').addEventListener('change', (e) => { state.survey = e.target.value; saveStore(); aladin?.setImageSurvey(state.survey); });
+$('#boost').value = state.boost;
+$('#boost').addEventListener('input', (e) => { state.boost = +e.target.value; applyBoost(); saveStore(); });
+$('#survey').addEventListener('change', (e) => { state.survey = e.target.value; saveStore(); aladin?.setImageSurvey(state.survey); setTimeout(applyBoost, 300); setTimeout(applyBoost, 1500); });
 $('#seeing').value = state.seeing;
 $('#useFc').checked = state.useFcSeeing;
 $('#useFc').addEventListener('change', (e) => { state.useFcSeeing = e.target.checked; saveStore(); renderRigStats(); });
