@@ -580,10 +580,18 @@ async function fitsToCanvas(file, h) {
   const med = (q(0.5) - lo) / span;
   const dev = smp.map((v) => Math.abs((v - lo) / span - med)).sort((a, b) => a - b);
   const mad = 1.4826 * dev[Math.floor(dev.length / 2)];
-  const linear = med < 0.12;                       // unstretched data: apply a screen-transfer-style stretch
+  // The format's natural range (what PixInsight etc. display without a screen stretch)
+  let rlo = lo, rhi = hi;
+  if (bp === 8) { rlo = 0; rhi = 255; }
+  else if (bp === 16) { rlo = bz === 32768 ? 0 : -32768; rhi = rlo + 65535; }
+  else if (bp < 0 && lo >= -1e-4 && smp[smp.length - 1] <= 1.0001) { rlo = 0; rhi = 1; }
+  const medNat = (q(0.5) - rlo) / (rhi - rlo);
+  const linear = medNat < 0.05;                    // linear stacks sit near black; stretched images have a lifted background
   const c0 = linear ? Math.max(0, med - 2.8 * mad) : 0;
   const m = linear ? mtf(0.25, Math.max(1e-6, med - c0)) : 0.5;
-  const tx = (v) => { let x = (v - lo) / span; x = (x - c0) / (1 - c0); return Math.round(255 * (linear ? mtf(m, x) : Math.min(1, Math.max(0, x)))); };
+  const tx = linear
+    ? (v) => { let x = (v - lo) / span; x = (x - c0) / (1 - c0); return Math.round(255 * mtf(m, x)); }
+    : (v) => Math.round(255 * Math.min(1, Math.max(0, (v - rlo) / (rhi - rlo))));
   // build the canvas, downsampled to ≤ 4096 px, display-correct (top of image at top)
   const step = Math.max(1, Math.ceil(Math.max(W, H) / 4096));
   const w = Math.floor(W / step), hh = Math.floor(H / step);
@@ -669,7 +677,11 @@ async function addImageFiles(files) {
     try {
       msg(`Reading ${x.f.name}…`);
       const d = await fitsToCanvas(x.f, x.h);
-      const w0 = linearWcs(x.h);
+      // use the FITS's own solution, or a separate solve file selected with it (e.g. astrometry.net wcs.fits)
+      const solveFiles = headers.filter((y) => !y.hasData && linearWcs(y.h));
+      const side = solveFiles.find((y) => baseName(y.f.name) === baseName(x.f.name))
+        || (solveFiles.length === 1 && headers.filter((y) => y.hasData).length === 1 ? solveFiles[0] : null);
+      const w0 = linearWcs(x.h) || (side && linearWcs(side.h));
       let w, approx = false;
       if (w0) {
         w = { ...w0, w: d.W, h: d.H };
@@ -708,7 +720,7 @@ function refreshImageLayers(force) {
     if (want && (!cur || cur.flip !== rec.flip || cur.rot !== (rec.rot || 0))) {
       if (cur) aladin.removeImageLayer(cur.layer);
       if (!imgUrls.has(rec.id)) imgUrls.set(rec.id, URL.createObjectURL(rec.blob));
-      const opts = { name: rec.name, imgFormat: rec.fmt, successCallback: () => {}, errorCallback: () => { $('#imgMsg').textContent = `Could not display ${rec.name}.`; } };
+      const opts = { name: rec.name, imgFormat: rec.fmt, minCut: 0, maxCut: 255, successCallback: () => { try { img.setCuts(0, 255); } catch {} }, errorCallback: () => { $('#imgMsg').textContent = `Could not display ${rec.name}.`; } };
       let ew = rec.approx ? rotateWcs(rec.wcs, rec.rot || 0) : rec.wcs;
       if (rec.flip) ew = flipWcs(ew);
       if (rec.fmt !== 'fits' || rec.flip) opts.wcs = toAladinWcs(ew);
