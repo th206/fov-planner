@@ -73,6 +73,9 @@
   .wxgrid .b { background: color-mix(in srgb, var(--bad) 32%, transparent); }
   .wxgrid .sep { grid-column: 1 / -1; height: 4px; padding: 0; }
   .wxsum { font-size: 12px; line-height: 1.6; margin-bottom: 8px; }
+  .locbar { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .locname { font-size: 13px; font-weight: 600; }
+  .locname .note { font-weight: 400; }
   .wxsum b { font-weight: 600; }
   .wxnote { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
   #wxLinks a { color: var(--accent); }
@@ -145,6 +148,19 @@
 
     <section class="card">
       <h2>Conditions <button class="icon ghost" id="wxReload" title="Refresh forecast">↻</button></h2>
+      <div class="locbar">
+        <div class="locname"><span id="locName">—</span> <span id="locTag"></span></div>
+        <form id="placeForm" class="row" autocomplete="off">
+          <input id="placeQ" placeholder="Place name or lat, lon" aria-label="Location" style="flex:1">
+          <button type="submit" class="icon">Go</button>
+          <button type="button" class="icon" id="geoBtn" title="Use this device's location">◎ My location</button>
+        </form>
+        <div class="row">
+          <button type="button" class="icon ghost" id="setDefault" title="Show conditions for this place every time the planner opens">★ Save as default</button>
+          <button type="button" class="icon ghost" id="useDefault">↩ Back to default</button>
+          <span class="note" id="locMsg"></span>
+        </div>
+      </div>
       <div id="wxSum" class="wxsum"></div>
       <div id="wx"></div>
       <details id="t7" style="margin-top:10px">
@@ -250,7 +266,7 @@ function saveStore() {
   try {
     localStorage.setItem(KEY, JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      seeing: state.seeing, useFcSeeing: state.useFcSeeing, site: state.site, follow: state.follow,
+      seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow,
     }));
   } catch { /* storage unavailable */ }
 }
@@ -261,7 +277,8 @@ const state = {
   rigs: saved.rigs || structuredClone(DEFAULT_RIGS),
   survey: (saved.survey || 'CDS/P/DSS2/color').replace(/^P\//, 'CDS/P/'),
   seeing: saved.seeing || 2.0,
-  site: saved.site || { lat: 25.29, lon: 51.53, tz: 3 },
+  defaultSite: saved.defaultSite || { name: 'Doha, Qatar', ...(saved.site || { lat: 25.29, lon: 51.53, tz: 3 }) },
+  site: null,
   follow: saved.follow ?? true,
   useFcSeeing: saved.useFcSeeing ?? true,
   fcSeeing: null,
@@ -269,6 +286,7 @@ const state = {
   size: null,            // {maj, min, pa} arcmin
   center: [10.6847, 41.2690],
 };
+state.site = { ...state.defaultSite };
 const scopeById = (id) => state.scopes.find((s) => s.id === id);
 const camById = (id) => state.cams.find((c) => c.id === id);
 
@@ -840,6 +858,75 @@ function renderWxLinks() {
     <a href="https://clearoutside.com/forecast/${lat.toFixed(2)}/${lon.toFixed(2)}" target="_blank" rel="noopener">Clear Outside</a>`;
 }
 
+/* ---------- Location ---------- */
+const sameSite = (a, b) => a && b && Math.abs(a.lat - b.lat) < 1e-4 && Math.abs(a.lon - b.lon) < 1e-4;
+function renderLoc() {
+  const s = state.site, d = state.defaultSite;
+  $('#locName').innerHTML = `${esc(s.name || 'Custom location')} <span class="note">${s.lat.toFixed(3)}, ${s.lon.toFixed(3)} · UTC${s.tz >= 0 ? '+' : ''}${s.tz}</span>`;
+  const isDef = sameSite(s, d);
+  $('#locTag').innerHTML = isDef ? '<span class="tag good">default</span>' : '';
+  $('#setDefault').style.display = isDef ? 'none' : '';
+  $('#useDefault').style.display = isDef ? 'none' : '';
+  for (const k of ['lat', 'lon', 'tz']) if (document.activeElement !== $('#' + k)) $('#' + k).value = s[k];
+}
+function siteChanged(debounced) {
+  renderLoc(); drawAltChart();
+  if (state.target) { renderTarget(); }
+  debounced ? scheduleWeather() : loadWeather();
+}
+const locMsg = (t) => { $('#locMsg').textContent = t; };
+async function lookupTz(lat, lon) {
+  try {
+    const j = await fetchJson(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&timezone=auto&forecast_days=1&current=temperature_2m`, 8000);
+    if (Number.isFinite(j.utc_offset_seconds)) return Math.round((j.utc_offset_seconds / 3600) * 2) / 2;
+    return Math.round(lon / 15);
+  } catch { return Math.round(lon / 15); }
+}
+async function reverseName(lat, lon) {
+  try {
+    const j = await fetchJson(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`, 8000);
+    const place = j.city || j.locality || j.principalSubdivision;
+    return [place, j.countryName].filter(Boolean).join(', ') || null;
+  } catch { return null; }
+}
+async function setSite(lat, lon, name) {
+  locMsg('Updating…');
+  const tz = await lookupTz(lat, lon);
+  state.site = { lat: +lat.toFixed(4), lon: +lon.toFixed(4), tz, name: name || `${lat.toFixed(2)}, ${lon.toFixed(2)}` };
+  locMsg('');
+  siteChanged(false);
+  if (!name) reverseName(lat, lon).then((n) => { if (n && sameSite(state.site, { lat, lon })) { state.site.name = n; renderLoc(); } });
+}
+async function searchPlace(q) {
+  q = q.trim(); if (!q) return;
+  const m = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (m) {
+    const lat = +m[1], lon = +m[2];
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) { locMsg('Latitude must be ±90, longitude ±180.'); return; }
+    return setSite(lat, lon);
+  }
+  locMsg('Searching…');
+  try {
+    const j = await fetchJson(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&language=en`, 8000);
+    const r = j.results?.[0];
+    if (!r) { locMsg(`No place called “${q}”.`); return; }
+    await setSite(r.latitude, r.longitude, [r.name, r.admin1 !== r.name ? r.admin1 : null, r.country].filter(Boolean).join(', '));
+    $('#placeQ').value = '';
+  } catch (e) { locMsg(e.message); }
+}
+function useMyLocation() {
+  if (!navigator.geolocation) { locMsg('This browser cannot share its location.'); return; }
+  locMsg('Finding your location…');
+  navigator.geolocation.getCurrentPosition(
+    (p) => setSite(p.coords.latitude, p.coords.longitude),
+    (e) => locMsg(e.code === 1 ? 'Location permission was denied. Allow it in the browser settings, or type a place.' : 'Could not get your location. Try again or type a place.'),
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 });
+}
+$('#placeForm').addEventListener('submit', (e) => { e.preventDefault(); searchPlace($('#placeQ').value); });
+$('#geoBtn').addEventListener('click', useMyLocation);
+$('#setDefault').addEventListener('click', () => { state.defaultSite = { ...state.site }; saveStore(); renderLoc(); locMsg('Saved as default.'); setTimeout(() => locMsg(''), 2500); });
+$('#useDefault').addEventListener('click', () => { state.site = { ...state.defaultSite }; locMsg(''); siteChanged(false); });
+
 /* ---------- Equipment dialog ---------- */
 function eqRowScope(s) { return `<tr data-id="${s.id}"><td><input data-f="name" value="${esc(s.name)}"></td><td><input data-f="fl" type="number" min="1" value="${s.fl}"></td><td><input data-f="ap" type="number" min="0" step="0.1" value="${s.ap ?? ''}"></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
 function eqRowCam(c) { return `<tr data-id="${c.id}"><td><input data-f="name" value="${esc(c.name)}"></td><td><input data-f="wpx" type="number" min="1" value="${c.wpx}"></td><td><input data-f="hpx" type="number" min="1" value="${c.hpx}"></td><td><input data-f="px" type="number" min="0.1" step="0.01" value="${c.px}"></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
@@ -897,7 +984,7 @@ $('#useFc').addEventListener('change', (e) => { state.useFcSeeing = e.target.che
 $('#seeing').addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (v > 0) { state.seeing = v; saveStore(); renderRigStats(); } });
 for (const k of ['lat', 'lon', 'tz']) {
   $('#' + k).value = state.site[k];
-  $('#' + k).addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (isFinite(v)) { state.site[k] = v; saveStore(); drawAltChart(); scheduleWeather(); if (state.target) renderTarget(); } });
+  $('#' + k).addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (isFinite(v)) { state.site[k] = v; if (k !== 'tz') state.site.name = 'Custom location'; siteChanged(true); } });
 }
 { const now = new Date(Date.now() + state.site.tz * 3600e3); $('#night').value = now.toISOString().slice(0, 10); }
 $('#night').addEventListener('change', () => { drawAltChart(); loadWeather(); });
@@ -920,6 +1007,7 @@ $('#addCam').addEventListener('click', () => $('#camTbl tbody').insertAdjacentHT
 $('#eqDlg').addEventListener('click', (e) => { if (e.target.matches('[data-del]')) e.target.closest('tr').remove(); });
 
 renderRigs();
+renderLoc();
 drawAltChart();
 loadWeather();
 try {
