@@ -84,6 +84,12 @@
   .wxsum { font-size: 12px; line-height: 1.6; margin-bottom: 8px; }
   .chip.on { background: color-mix(in srgb, var(--accent) 25%, var(--panel-2)); border-color: var(--accent); color: var(--text); }
   #tnList { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+  .tnpick { width: 100%; margin-top: 8px; font-size: 15px; padding: 9px 8px; }
+  .tnfilters { margin-top: 8px; }
+  .tnfilters summary { cursor: pointer; padding: 4px 0; }
+  .tnfilters[open] summary { margin-bottom: 6px; }
+  .tn-item.sel { border-color: var(--accent); }
+  .tn-kicker { font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 3px; }
   .tn-item { padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); cursor: pointer; }
   .tn-item:hover, .tn-item:focus { border-color: var(--accent); outline: none; }
   .tn-l1 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
@@ -162,21 +168,24 @@
     <section class="card" id="tonightCard">
       <h2>Tonight's targets <span class="note" id="tnCount"></span></h2>
       <div class="row"><label style="flex:1">For <select id="tnRig" style="flex:1"></select></label></div>
-      <div class="chips" id="tnTypes"></div>
-      <div class="row" style="margin-top:8px">
-        <label title="Minimum altitude to count as usable">Min alt <input id="tnMinAlt" class="num" type="number" min="0" max="80" step="5" style="width:50px">°</label>
-        <label title="Hide targets that fill less than this share of the frame">Min fill <input id="tnMinFill" class="num" type="number" min="1" max="90" step="5" style="width:50px">%</label>
-        <label title="Hide targets that need more mosaic panels than this">Max panels <input id="tnMaxPanels" class="num" type="number" min="1" max="16" step="1" style="width:46px"></label>
-      </div>
-      <div class="row" style="margin-top:6px">
-        <label title="Galaxies, reflection nebulae and clusters only count hours when the Moon is down or far away"><input type="checkbox" id="tnMoon"> avoid Moon (broadband)</label>
-        <label>Sort <select id="tnSort"><option value="best">Best tonight</option><option value="hours">Usable hours</option><option value="fit">Best fit</option><option value="bright">Brightest</option><option value="size">Largest</option></select></label>
-      </div>
-      <div class="note" id="tnMoonInfo" style="margin-top:6px"></div>
+      <select id="tnPick" class="tnpick" aria-label="Choose a target"></select>
       <div id="tnList"></div>
-      <button type="button" class="icon ghost" id="tnMore" style="margin-top:6px;width:100%">Show more</button>
+      <div class="note" id="tnMoonInfo" style="margin-top:6px"></div>
+      <details class="tnfilters">
+        <summary class="note" id="tnFilterSum">Filters</summary>
+        <div class="chips" id="tnTypes"></div>
+        <div class="row" style="margin-top:8px">
+          <label title="Minimum altitude to count as usable">Min alt <input id="tnMinAlt" class="num" type="number" min="0" max="80" step="5" style="width:50px">°</label>
+          <label title="Hide targets that fill less than this share of the frame">Min fill <input id="tnMinFill" class="num" type="number" min="1" max="90" step="5" style="width:50px">%</label>
+          <label title="Hide targets that need more mosaic panels than this">Max panels <input id="tnMaxPanels" class="num" type="number" min="1" max="16" step="1" style="width:46px"></label>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <label title="Galaxies, reflection nebulae and clusters only count hours when the Moon is down or far away"><input type="checkbox" id="tnMoon"> avoid Moon (broadband)</label>
+          <label>Sort <select id="tnSort"><option value="best">Best tonight</option><option value="hours">Usable hours</option><option value="fit">Best fit</option><option value="bright">Brightest</option><option value="size">Largest</option></select></label>
+        </div>
+      </details>
       <div class="wxnote">For the night and place set below. Hours count astronomical darkness with the target above your minimum altitude.
-        Click a target to load it; for mosaics the rig's grid and rotation are set for you. Catalog: OpenNGC (CC-BY-SA 4.0) and Sharpless (1959).</div>
+        Pick a target from the list to load it; for mosaics the rig's grid and rotation are set for you. Catalog: OpenNGC (CC-BY-SA 4.0) and Sharpless (1959).</div>
     </section>
 
     <section class="card">
@@ -947,7 +956,7 @@ function fitFor(o, g, opt) {
 }
 const fitRank = (f) => (f.kind === 'fits' ? 10 - Math.abs(f.fill - 0.6) : 5 - f.panels);   // prefer ~60% fill, then fewest panels
 
-let tnCache = null, tnShown = 30, tnTimer;
+let tnCache = null, tnSel = 0, tnTimer;
 const scheduleTonight = () => { clearTimeout(tnTimer); tnTimer = setTimeout(renderTonight, 250); };
 function tonightSetup() {
   const o = state.tn;
@@ -1015,21 +1024,33 @@ function renderTonight() {
       + (o.avoidMoon && illum > 0.25 ? ' · galaxies &amp; clusters only count moon-free hours' : '');
   if (!items.length) {
     $('#tnList').innerHTML = `<div class="note" style="padding:6px 0">Nothing suits ${o.rig === 'any' ? 'your rigs' : 'this rig'} with these filters. Try lowering the minimum altitude or fill, allowing more mosaic panels, or adding a type.</div>`;
-    $('#tnMore').style.display = 'none'; return;
+    $('#tnPick').innerHTML = '<option>No matching targets</option>'; $('#tnCount').textContent = '';
+    const gl = Object.fromEntries(GROUPS);
+    $('#tnFilterSum').textContent = `Filters: ${o.types.map((g) => gl[g]).join(', ') || 'no types'} · ≥${o.minAlt}° · fill ≥${o.minFill}% · ≤${o.maxPanels} panels`;
+    return;
   }
-  $('#tnList').innerHTML = items.slice(0, tnShown).map((it, k) => {
-    const { c, best, hours, peak, peakMs } = it, f = best.f;
-    const fitTag = f.kind === 'fits' ? `<span class="tag good">fits · ${Math.round(f.fill * 100)}%</span>` : `<span class="tag warn">${f.nc}×${f.nr} mosaic</span>`;
-    const rigDot = o.rig === 'any' ? `<span class="rigdot" style="--c:${best.r.color}" title="${esc(best.g.s.name)} + ${esc(best.g.c.name)}"></span>` : '';
-    const size = c.maj === c.min ? `${c.maj}′` : `${c.maj}′×${c.min}′`;
-    return `<div class="tn-item" data-k="${k}" tabindex="0" role="button">
-      <div class="tn-l1">${rigDot}<b>${esc(c.id)}</b> <span class="tn-name">${esc(c.name || c.alt.split(' · ')[0] || '')}</span> ${fitTag}</div>
-      <div class="tn-l2">${TYPE_NAMES[c.t] || c.t} · ${size}${c.mag != null ? ` · mag ${c.mag}` : ''} · <b>${hours.toFixed(1)} h</b> · max ${Math.round(peak)}° at ${hhmm(peakMs)}${it.moonSensitive && it.moonSep < 180 ? ` · Moon ${Math.round(it.moonSep)}°` : ''}</div>
-    </div>`;
+  const fitText = (f) => (f.kind === 'fits' ? `fits ${Math.round(f.fill * 100)}%` : `${f.nc}×${f.nr} mosaic`);
+  const sel = Math.min(tnSel, items.length - 1);
+  $('#tnPick').innerHTML = items.map((it, k) => {
+    const { c, best, hours } = it;
+    const nm = c.name || c.alt.split(' · ')[0] || '';
+    const short = (n) => n.split(/\s+/).find((w) => /\d/.test(w)) || n.split(/\s+/)[0];
+    const rig = o.rig === 'any' ? ` · ${short(best.g.s.name)}` : '';
+    return `<option value="${k}" ${k === sel ? 'selected' : ''}>${k + 1}. ${esc(c.id)}${nm ? ' ' + esc(nm) : ''} — ${fitText(best.f)} · ${hours.toFixed(1)} h${esc(rig)}</option>`;
   }).join('');
-  $('#tnMore').style.display = items.length > tnShown ? '' : 'none';
-  $('#tnMore').textContent = `Show more (${items.length - tnShown} more)`;
+  const it = items[sel], { c, best, hours, peak, peakMs } = it, f = best.f;
+  const fitTag = f.kind === 'fits' ? `<span class="tag good">fits · ${Math.round(f.fill * 100)}%</span>` : `<span class="tag warn">${f.nc}×${f.nr} mosaic</span>`;
+  const rigLine = `<span class="rigdot" style="--c:${best.r.color}"></span>${esc(best.g.s.name)} + ${esc(best.g.c.name)}`;
+  const size = c.maj === c.min ? `${c.maj}′` : `${c.maj}′×${c.min}′`;
+  $('#tnList').innerHTML = `<div class="tn-item sel" data-k="${sel}" tabindex="0" role="button" title="Load on the map">
+      <div class="tn-kicker">${sel === 0 ? 'Top pick' : `#${sel + 1} of ${items.length}`} · tap to load</div>
+      <div class="tn-l1"><b>${esc(c.id)}</b> <span class="tn-name">${esc(c.name || c.alt.split(' · ')[0] || '')}</span> ${fitTag}</div>
+      <div class="tn-l2">${TYPE_NAMES[c.t] || c.t} · ${size}${c.mag != null ? ` · mag ${c.mag}` : ''} · <b>${hours.toFixed(1)} h</b> · max ${Math.round(peak)}° at ${hhmm(peakMs)}${it.moonSensitive && it.moonSep < 180 ? ` · Moon ${Math.round(it.moonSep)}°` : ''}</div>
+      <div class="tn-l2">${rigLine}</div>
+    </div>`;
   $('#tnCount').textContent = `${items.length} target${items.length === 1 ? '' : 's'}`;
+  const gl = Object.fromEntries(GROUPS);
+  $('#tnFilterSum').textContent = `Filters: ${o.types.map((g) => gl[g]).join(', ') || 'no types'} · ≥${o.minAlt}° · fill ≥${o.minFill}% · ≤${o.maxPanels} panel${o.maxPanels == 1 ? '' : 's'}${o.avoidMoon ? ' · avoid Moon' : ''}`;
 }
 function pickTonight(k) {
   const it = tnCache?.items[k]; if (!it) return;
@@ -1049,17 +1070,17 @@ function showCatalogTarget(c) {
   setTarget(t, { maj: c.maj, min: c.min, pa: c.pa, src: 'catalog' }, c.id);
   document.querySelector('main').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
-$('#tnRig').addEventListener('change', (e) => { state.tn.rig = e.target.value; saveStore(); tnShown = 30; renderTonight(); });
+$('#tnRig').addEventListener('change', (e) => { state.tn.rig = e.target.value; saveStore(); tnSel = 0; renderTonight(); });
 $('#tnTypes').addEventListener('click', (e) => {
   const g = e.target.dataset.g; if (!g) return;
   const set = new Set(state.tn.types); set.has(g) ? set.delete(g) : set.add(g); state.tn.types = [...set];
-  e.target.classList.toggle('on'); saveStore(); tnShown = 30; renderTonight();
+  e.target.classList.toggle('on'); saveStore(); tnSel = 0; renderTonight();
 });
 for (const [id, k] of [['#tnMinAlt', 'minAlt'], ['#tnMinFill', 'minFill'], ['#tnMaxPanels', 'maxPanels']])
   $(id).addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (isFinite(v)) { state.tn[k] = v; saveStore(); scheduleTonight(); } });
 $('#tnMoon').addEventListener('change', (e) => { state.tn.avoidMoon = e.target.checked; saveStore(); renderTonight(); });
-$('#tnSort').addEventListener('change', (e) => { state.tn.sort = e.target.value; saveStore(); renderTonight(); });
-$('#tnMore').addEventListener('click', () => { tnShown += 30; renderTonight(); });
+$('#tnSort').addEventListener('change', (e) => { state.tn.sort = e.target.value; tnSel = 0; saveStore(); renderTonight(); });
+$('#tnPick').addEventListener('change', (e) => { tnSel = +e.target.value; renderTonight(); pickTonight(tnSel); });
 $('#tnList').addEventListener('click', (e) => { const el = e.target.closest('.tn-item'); if (el) pickTonight(+el.dataset.k); });
 $('#tnList').addEventListener('keydown', (e) => { if (e.key === 'Enter') { const el = e.target.closest('.tn-item'); if (el) pickTonight(+el.dataset.k); } });
 
