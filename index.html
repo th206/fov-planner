@@ -120,6 +120,8 @@
     aside { border-right: none; overflow: visible; padding: 12px 16px; }
   }
 </style>
+<!-- Anonymous visitor statistics (GoatCounter: no cookies, no personal data) -->
+<script data-goatcounter="https://fovplanner.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
 </head>
 <body>
 <div id="app">
@@ -261,7 +263,7 @@
         <label class="note"><input type="checkbox" id="exportImgs"> include My images (larger file)</label>
         <div class="note" id="backupMsg"></div>
       </div>
-      <div class="note" style="margin-top:8px">Imagery &amp; name lookup: CDS Aladin Lite and SIMBAD. Everything is saved in this browser; use Export to back it up or move it to another device.</div>
+      <div class="note" style="margin-top:8px">Imagery &amp; name lookup: CDS Aladin Lite and SIMBAD. Everything is saved in this browser; use Export to back it up or move it to another device. Anonymous usage counts (pages and features used, no cookies or personal data) via GoatCounter.</div>
     </section>
   </aside>
 
@@ -913,7 +915,9 @@ async function search(q) {
   }
 }
 
+let targetLoads = 0;
 function setTarget(t, size, label) {
+  if (targetLoads++) track('target/' + (t.coordsOnly ? 'coordinates' : normId(t.mainId || label)));   // which targets people plan (skips the automatic first load)
   state.target = t; state.size = size || null; state.center = [t.ra, t.dec];
   try { history.replaceState(null, '', '#' + encodeURIComponent(label)); } catch {}
   $('#q').value = label; $('#status').textContent = '';
@@ -1709,6 +1713,25 @@ $('#importBtn').addEventListener('click', () => $('#importFile').click());
 $('#importFile').addEventListener('change', (e) => { const f = e.target.files?.[0]; if (f) importBackup(f); e.target.value = ''; });
 // Ask the browser to keep this site's data (protects it from automatic cleanup where supported)
 try { navigator.storage?.persist?.(); } catch {}
+
+/* ---------- Anonymous feature counts (GoatCounter events) ---------- */
+const tracked = new Set();
+function track(name, once = false) {
+  if (once && tracked.has(name)) return;
+  tracked.add(name);
+  const send = () => { try { window.goatcounter.count({ path: name.startsWith('target/') ? name : 'feature/' + name, title: name, event: true }); } catch {} };
+  if (window.goatcounter?.count) send(); else setTimeout(() => { if (window.goatcounter?.count) send(); }, 4000);
+}
+for (const [sel, ev, name, once] of [
+  ['#searchForm', 'submit', 'search'], ['#quick', 'click', 'quick-target'],
+  ['#tnPick', 'change', 'tonight-pick'], ['#tnList', 'click', 'tonight-card'], ['#tnRig', 'change', 'tonight-rig', true], ['#tnTypes', 'click', 'tonight-filters', true],
+  ['#addRig', 'click', 'rig-add'], ['#eqSave', 'click', 'equipment-save'],
+  ['#imgFile', 'change', 'image-add'], ['#exportBtn', 'click', 'backup-export'], ['#importFile', 'change', 'backup-import'],
+  ['#geoBtn', 'click', 'my-location'], ['#placeForm', 'submit', 'place-search'], ['#setDefault', 'click', 'save-default-location'],
+  ['#survey', 'change', 'survey-change', true], ['#boost', 'change', 'faint-detail', true],
+  ['#t7', 'toggle', '7timer-open', true], ['#wxReload', 'click', 'forecast-refresh', true], ['#night', 'change', 'night-change', true],
+]) $(sel)?.addEventListener(ev, () => track(name, once));
+$('main').addEventListener('drop', () => track('image-add'));
 
 renderRigs();
 renderLoc();
