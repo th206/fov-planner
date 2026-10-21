@@ -1263,6 +1263,7 @@ function onRigInput(e) {
     r[k] = v;
     if (k === 'rot') el.querySelector('[data-rotv]').textContent = `${v}°`;
   }
+  if (k === 'on' || k === 'scope' || k === 'cam') tonightSetup();   // keep rig names in Tonight's dropdown current
   saveStore(); renderRigStats(); drawFrames(); scheduleTonight();
 }
 
