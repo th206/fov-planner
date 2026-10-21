@@ -12,7 +12,7 @@ Plan astrophotography framing with **several telescope + camera combinations ove
 - Seeing estimate in arcseconds from a layered turbulence model (Dewan / Tatarskii) using temperature and wind at 16 pressure levels (1000–100 hPa): zenith, free-air (above 1 km) and on-target (corrected for altitude), plus the main turbulent layer, jet-stream wind (300–200 hPa) and cooling rate. The rig sampling check can use the forecast seeing
 - 7Timer ASTRO chart, plus links to meteoblue and Clear Outside
 - Sky surveys: DSS2, Pan-STARRS, 2MASS, H-alpha, Mellinger — with a "Faint detail" slider that stretches the survey to bring out faint nebulosity
-- My images: overlay your own plate-solved images (JPG/PNG + astrometry.net `wcs.fits` or ASTAP `.wcs`, or a FITS with WCS). Stored in your browser and shown automatically when that part of the sky is in view, with opacity and flip controls
+- My images: overlay your own plate-solved images (JPG/PNG + astrometry.net `wcs.fits` or ASTAP `.wcs`, or a FITS, mono or RGB, which is auto-stretched; unsolved FITS are placed approximately from RA/DEC + focal length + pixel size with a rotation slider). Stored in your browser and shown automatically when that part of the sky is in view, with opacity and flip controls
 - Editable equipment list. Rigs and settings are saved in your browser.
 
 Single file (`index.html`), no build step. Uses [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) from jsDelivr.

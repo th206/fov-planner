@@ -548,6 +548,84 @@ async function loadBitmap(blob) {
 const baseName = (n) => n.replace(/\.(jpe?g|png|fits?|fts|wcs|ini|txt)$/i, '').replace(/[._-]?wcs$/i, '').toLowerCase();
 const isPic = (f) => /\.(jpe?g|png)$/i.test(f.name), isFits = (f) => /\.(fits?|fts)$/i.test(f.name), isWcsText = (f) => /\.(wcs|ini|txt)$/i.test(f.name);
 
+// ---- FITS → display canvas (mono or RGB, auto-stretched, honours ROWORDER) ----
+function fitsDataOffset(buf) {
+  const b = new Uint8Array(buf);
+  for (let blk = 0; blk * 2880 < b.length && blk < 400; blk++) {
+    for (let c = 0; c < 36; c++) {
+      const p = blk * 2880 + c * 80;
+      if (b[p] === 69 && b[p + 1] === 78 && b[p + 2] === 68 && (b[p + 3] === 32 || b[p + 3] === undefined)) return (blk + 1) * 2880; // "END "
+    }
+  }
+  throw new Error('FITS header has no END card');
+}
+const mtf = (m, x) => (x <= 0 ? 0 : x >= 1 ? 1 : ((m - 1) * x) / ((2 * m - 1) * x - m));
+async function fitsToCanvas(file, h) {
+  const buf = await file.arrayBuffer();
+  const off = fitsDataOffset(buf);
+  const W = h.NAXIS1, H = h.NAXIS2, C = h.NAXIS >= 3 && (h.NAXIS3 || 1) >= 3 ? 3 : 1;
+  const bp = h.BITPIX, bz = h.BZERO || 0, bs = h.BSCALE ?? 1, nb = Math.abs(bp) / 8, plane = W * H;
+  if (off + plane * (h.NAXIS >= 3 ? (h.NAXIS3 || 1) : 1) * nb > buf.byteLength) throw new Error('file is truncated');
+  const dv = new DataView(buf, off);
+  const rd = bp === 8 ? (i) => dv.getUint8(i) : bp === 16 ? (i) => dv.getInt16(i * 2) : bp === 32 ? (i) => dv.getInt32(i * 4)
+    : bp === -32 ? (i) => dv.getFloat32(i * 4) : bp === -64 ? (i) => dv.getFloat64(i * 8) : null;
+  if (!rd) throw new Error(`unsupported BITPIX ${bp}`);
+  const val = (i) => bz + bs * rd(i);
+  // robust statistics from a sample (all channels linked)
+  const total = plane * C, sstep = Math.max(1, Math.floor(total / 300000)), smp = [];
+  for (let i = 0; i < total; i += sstep) { const v = val(i); if (Number.isFinite(v)) smp.push(v); }
+  smp.sort((a, b) => a - b);
+  const q = (p) => smp[Math.min(smp.length - 1, Math.max(0, Math.floor(p * smp.length)))];
+  const lo = q(0), hi = Math.max(q(0.99995), lo + 1e-9), span = hi - lo;
+  const med = (q(0.5) - lo) / span;
+  const dev = smp.map((v) => Math.abs((v - lo) / span - med)).sort((a, b) => a - b);
+  const mad = 1.4826 * dev[Math.floor(dev.length / 2)];
+  const linear = med < 0.12;                       // unstretched data: apply a screen-transfer-style stretch
+  const c0 = linear ? Math.max(0, med - 2.8 * mad) : 0;
+  const m = linear ? mtf(0.25, Math.max(1e-6, med - c0)) : 0.5;
+  const tx = (v) => { let x = (v - lo) / span; x = (x - c0) / (1 - c0); return Math.round(255 * (linear ? mtf(m, x) : Math.min(1, Math.max(0, x)))); };
+  // build the canvas, downsampled to ≤ 4096 px, display-correct (top of image at top)
+  const step = Math.max(1, Math.ceil(Math.max(W, H) / 4096));
+  const w = Math.floor(W / step), hh = Math.floor(H / step);
+  const topDown = String(h.ROWORDER || '').toUpperCase().startsWith('TOP');
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = hh;
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(w, hh), px = img.data;
+  for (let y = 0; y < hh; y++) {
+    const fy = y * step, row = topDown ? y : hh - 1 - y;
+    for (let x = 0; x < w; x++) {
+      const i = fy * W + x * step, o = (row * w + x) * 4;
+      const r = tx(val(i));
+      px[o] = r; px[o + 1] = C === 3 ? tx(val(i + plane)) : r; px[o + 2] = C === 3 ? tx(val(i + 2 * plane)) : r; px[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return { canvas: cv, step, topDown, W, H };
+}
+const parseSexa = (s, hours) => {
+  if (typeof s === 'number') return s;
+  const p = String(s || '').trim().split(/[\s:hmsd°'"]+/).filter(Boolean).map(Number);
+  if (!p.length || p.some((x) => !isFinite(x))) return null;
+  const neg = String(s).trim().startsWith('-');
+  const v = Math.abs(p[0]) + (p[1] || 0) / 60 + (p[2] || 0) / 3600;
+  return (neg ? -v : v) * (hours ? 15 : 1);
+};
+// Approximate placement from capture metadata when the image has no plate solution (north up; rotate in the UI)
+function approxWcsFromHeader(h, w, hh, step) {
+  const ra = h.RA != null && typeof h.RA === 'number' ? h.RA : parseSexa(h.OBJCTRA ?? h.RA, true);
+  const dec = h.DEC != null && typeof h.DEC === 'number' ? h.DEC : parseSexa(h.OBJCTDEC ?? h.DEC, false);
+  let scale = h.SCALE || h.PIXSCALE || h.SECPIX || h.PIXSCALE1 || null;            // arcsec/px
+  const pix = h.XPIXSZ || h.PIXSIZE1 || h.PIXSIZE, fl = h.FOCALLEN || h.FOCAL;
+  if (!scale && pix && fl) scale = 206.265 * pix / fl;
+  if (ra == null || dec == null || !scale) return null;
+  const s = (scale * step) / 3600;
+  return { crval: [ra, dec], crpix: [(w + 1) / 2, (hh + 1) / 2], cd: [-s, 0, 0, s], w, h: hh };
+}
+function rotateWcs(w, deg) {
+  if (!deg) return w;
+  const r = deg * D2R, c = Math.cos(r), s = Math.sin(r), [a, b, cc, d] = w.cd;
+  return { ...w, cd: [c * a - s * cc, c * b - s * d, s * a + c * cc, s * b + c * d] };
+}
+
 async function addImageFiles(files) {
   files = [...files];
   const msg = (t) => { $('#imgMsg').textContent = t; };
@@ -581,15 +659,30 @@ async function addImageFiles(files) {
       added++;
     } catch (e) { problems.push(`${pic.name}: could not read the image`); }
   }
-  // 2) FITS images that carry their own WCS
+  // 2) FITS images (mono or RGB): convert to a stretched JPG; use the WCS if solved, else approximate from metadata
   for (const x of headers.filter((x) => x.hasData)) {
     if (pics.length === 1 && !headers.some((y) => !y.hasData)) continue; // used as the solve file above
-    const w0 = linearWcs(x.h);
-    if (!w0) { problems.push(`${x.f.name}: no WCS in the header`); continue; }
-    if (x.f.size > 150e6) { problems.push(`${x.f.name}: too large (export a JPG plus solve file instead)`); continue; }
-    const w = { ...w0, w: x.h.NAXIS1, h: x.h.NAXIS2 };
-    await imgPut({ id: newId(), name: x.f.name.replace(/\.[^.]+$/, ''), blob: x.f, fmt: 'fits', wcs: w, flip: false, ...imgFootprint(w), on: true, opacity: 0.85, added: Date.now() });
-    added++;
+    if (x.f.size > 800e6) { problems.push(`${x.f.name}: too large to load in the browser`); continue; }
+    try {
+      msg(`Reading ${x.f.name}…`);
+      const d = await fitsToCanvas(x.f, x.h);
+      const w0 = linearWcs(x.h);
+      let w, approx = false;
+      if (w0) {
+        w = { ...w0, w: d.W, h: d.H };
+        if (d.topDown) w = flipWcs(w);               // rows were stored top-first
+        if (d.step > 1) w = scaleWcs(w, d.canvas.width / w.w);
+      } else {
+        w = approxWcsFromHeader(x.h, d.canvas.width, d.canvas.height, d.step);
+        if (!w) { problems.push(`${x.f.name}: not plate-solved and no RA/DEC + focal length/pixel size to place it`); continue; }
+        approx = true;
+      }
+      const blob = await new Promise((r) => d.canvas.toBlob(r, 'image/jpeg', 0.9));
+      await imgPut({ id: newId(), name: x.f.name.replace(/\.[^.]+$/, ''), blob, fmt: 'jpeg', wcs: w, flip: false, approx, rot: 0,
+        ...imgFootprint(w), on: true, opacity: 0.85, added: Date.now() });
+      added++;
+      if (approx) problems.push(`${x.f.name}: no plate solution, so it is placed from RA/DEC and focal length. Use its rotation slider to line up the stars`);
+    } catch (e) { problems.push(`${x.f.name}: ${e.message || 'could not read the FITS file'}`); }
   }
   if (!pics.length && !headers.some((x) => x.hasData)) problems.push('Select the image together with its solve file.');
   msg((added ? `Added ${added} image${added > 1 ? 's' : ''}. ` : '') + problems.join(' · '));
@@ -609,15 +702,17 @@ function refreshImageLayers(force) {
   if (!aladin) return;
   for (const rec of imgCache) {
     const want = rec.on && inView(rec), cur = imgShown.get(rec.id);
-    if (want && (!cur || cur.flip !== rec.flip || force && cur.stale)) {
+    if (want && (!cur || cur.flip !== rec.flip || cur.rot !== (rec.rot || 0))) {
       if (cur) aladin.removeImageLayer(cur.layer);
       if (!imgUrls.has(rec.id)) imgUrls.set(rec.id, URL.createObjectURL(rec.blob));
       const opts = { name: rec.name, imgFormat: rec.fmt, successCallback: () => {}, errorCallback: () => { $('#imgMsg').textContent = `Could not display ${rec.name}.`; } };
-      if (rec.fmt !== 'fits' || rec.flip) opts.wcs = toAladinWcs(rec.flip ? flipWcs(rec.wcs) : rec.wcs);
+      let ew = rec.approx ? rotateWcs(rec.wcs, rec.rot || 0) : rec.wcs;
+      if (rec.flip) ew = flipWcs(ew);
+      if (rec.fmt !== 'fits' || rec.flip) opts.wcs = toAladinWcs(ew);
       const img = A.image(imgUrls.get(rec.id), opts);
       aladin.setOverlayImageLayer(img, imgLayerName(rec.id));
       try { img.setOpacity(rec.opacity); } catch {}
-      imgShown.set(rec.id, { layer: imgLayerName(rec.id), flip: rec.flip, img });
+      imgShown.set(rec.id, { layer: imgLayerName(rec.id), flip: rec.flip, rot: rec.rot || 0, img });
     } else if (!want && cur) {
       aladin.removeImageLayer(cur.layer); imgShown.delete(rec.id);
     }
@@ -644,7 +739,12 @@ async function renderImageList() {
         <span class="note">${fmtAngle(r.radius * 2 / Math.SQRT2)} · ${r.scale.toFixed(2)}″/px</span>
         <input type="range" min="0.1" max="1" step="0.05" data-k="opacity" value="${r.opacity}" title="Opacity">
         <label class="note" title="Use if the stars don't line up (image upside down)"><input type="checkbox" data-k="flip" ${r.flip ? 'checked' : ''}> flip</label>
-      </div>
+      </div>${r.approx ? `
+      <div class="top" title="Not plate-solved: placed from RA/DEC and focal length. Rotate until the stars line up.">
+        <span class="tag warn">approx.</span>
+        <input type="range" min="0" max="360" step="0.5" data-k="rot" value="${r.rot || 0}" aria-label="Rotation">
+        <span class="note" data-rotv style="width:40px;text-align:right">${(r.rot || 0).toFixed(1)}°</span>
+      </div>` : ''}
     </div>`).join('');
   refreshImageLayers(false);
 }
@@ -654,8 +754,10 @@ $('#imgList').addEventListener('input', async (e) => {
   const row = e.target.closest('.img-row'); if (!row) return;
   const rec = imgCache.find((r) => r.id === row.dataset.id); const k = e.target.dataset.k; if (!rec || !k) return;
   if (k === 'opacity') { rec.opacity = +e.target.value; try { imgShown.get(rec.id)?.img.setOpacity(rec.opacity); } catch {} }
+  else if (k === 'rot') { rec.rot = +e.target.value; row.querySelector('[data-rotv]').textContent = rec.rot.toFixed(1) + '°'; }
   else rec[k] = e.target.checked;
-  await imgPut(rec); refreshImageLayers(false);
+  await imgPut(rec);
+  if (k === 'rot') scheduleImageRefresh(); else refreshImageLayers(false);
 });
 $('#imgList').addEventListener('click', async (e) => {
   const act = e.target.dataset.act; if (!act) return;
