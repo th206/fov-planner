@@ -13,7 +13,8 @@ Plan astrophotography framing with **several telescope + camera combinations ove
 - 7Timer ASTRO chart, plus links to meteoblue and Clear Outside
 - Sky surveys: DSS2, Pan-STARRS, 2MASS, H-alpha, Mellinger — with a "Faint detail" slider that stretches the survey to bring out faint nebulosity
 - My images: overlay your own plate-solved images (JPG/PNG + astrometry.net `wcs.fits` or ASTAP `.wcs`, or a FITS, mono or RGB, optionally with a separate `wcs.fits`; linear data is auto-stretched, stretched data shown as-is; unsolved FITS are placed approximately from RA/DEC + focal length + pixel size with a rotation slider). Stored in your browser and shown automatically when that part of the sky is in view, with opacity and flip controls
-- Editable equipment list. Rigs and settings are saved in your browser.
+- Editable equipment list. Rigs and settings are saved in your browser
+- Export / Import backup (optionally with your images) to keep a copy, move your setup to another device, or share it with friends
 
 Single file (`index.html`), no build step. Uses [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) from jsDelivr.
 
