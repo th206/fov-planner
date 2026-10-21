@@ -1,5 +1,5 @@
 # Multi-Rig FOV Planner
-[Try it out!] (https://th206.github.io/fov-planner/)
+[Try it out!](https://th206.github.io/fov-planner/).
 <br>
 Plan astrophotography framing with **several telescope + camera combinations overlaid on the same target at once**.
 
