@@ -14,6 +14,7 @@
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-size: 14px; }
   #app { display: grid; grid-template-columns: 380px 1fr; height: 100vh; }
   aside { overflow-y: auto; border-right: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
@@ -162,7 +163,6 @@
         <input id="q" placeholder="M31, NGC 7000, Pelican Nebula, 20 58 47 +44 20" aria-label="Target">
         <button class="primary" type="submit">Go</button>
       </form>
-      <div class="chips" id="quick" hidden></div>
       <div id="status"></div>
     </section>
 
@@ -1787,8 +1787,6 @@ function saveEq() {
 }
 
 /* ---------- Wire up ---------- */
-$('#quick').innerHTML = QUICK.map((q) => `<button class="chip" type="button">${q}</button>`).join('');
-$('#quick').addEventListener('click', (e) => { if (e.target.matches('.chip')) search(e.target.textContent); });
 $('#searchForm').addEventListener('submit', (e) => { e.preventDefault(); search($('#q').value); });
 // iPhone Safari only fires 'change' (not 'input') for dropdowns and checkboxes, so listen to both
 $('#rigs').addEventListener('input', onRigInput);
@@ -1910,7 +1908,7 @@ function track(name, once = false) {
   if (window.goatcounter?.count) send(); else setTimeout(() => { if (window.goatcounter?.count) send(); }, 4000);
 }
 for (const [sel, ev, name, once] of [
-  ['#searchForm', 'submit', 'search'], ['#quick', 'click', 'quick-target'],
+  ['#searchForm', 'submit', 'search'],
   ['#tnPick', 'change', 'tonight-pick'], ['#tnList', 'click', 'tonight-card'], ['#tnRig', 'change', 'tonight-rig', true], ['#tnTypes', 'click', 'tonight-filters', true],
   ['#addRig', 'click', 'rig-add'], ['#eqSave', 'click', 'equipment-save'],
   ['#imgFile', 'change', 'image-add'], ['#exportBtn', 'click', 'backup-export'], ['#importFile', 'change', 'backup-import'],
