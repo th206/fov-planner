@@ -15,8 +15,13 @@
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
+  #movedBanner { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 14px; font-size: 13px; line-height: 1.5;
+    background: color-mix(in srgb, var(--accent) 22%, var(--panel)); border-bottom: 1px solid var(--accent); }
+  #movedBanner a { color: var(--text); }
+  #movedBanner button#movedExport { background: var(--accent); color: #08101f; border-color: var(--accent); font-weight: 600; padding: 3px 10px; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-size: 14px; }
   #app { display: grid; grid-template-columns: 380px 1fr; height: 100vh; }
+  #movedBanner:not([hidden]) + #app { height: calc(100vh - 64px); }
   aside { overflow-y: auto; border-right: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
   main { position: relative; min-height: 0; }
   #aladin { position: absolute; inset: 0; }
@@ -155,6 +160,13 @@
 <script data-goatcounter="https://fovplanner.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
 </head>
 <body>
+<div id="movedBanner" hidden>
+  <div>🔭 <b>The planner has moved to <a href="https://fovplanner.com/">fovplanner.com</a>.</b>
+    Your equipment, rigs and settings are saved per website, so take them with you:
+    <b>1.</b> <button type="button" id="movedExport">Export my setup</button>
+    <b>2.</b> open <a href="https://fovplanner.com/">fovplanner.com</a> → Settings → <i>Import backup</i>.</div>
+  <button type="button" id="movedClose" class="icon ghost" aria-label="Dismiss">✕</button>
+</div>
 <div id="app">
   <aside>
     <div>
@@ -246,6 +258,13 @@
       </div>
       <div class="moonbox"><span id="moonIcon"></span><div class="mtext" id="moonText"></div></div>
       <div class="moonstrip" id="moonStrip" aria-label="Moon over the next two weeks — tap a night to plan it"></div>
+      <div class="row wxmodel"><label class="note" title="Which weather model drives the forecast table and the seeing estimate">Forecast model
+        <select id="wxModel">
+          <option value="best_match">Best match (auto)</option>
+          <option value="ecmwf_ifs025">ECMWF (Europe)</option>
+          <option value="icon_seamless">ICON (Germany)</option>
+          <option value="gfs_seamless">GFS (USA)</option>
+        </select></label></div>
       <div id="wxSum" class="wxsum"></div>
       <div id="wx"></div>
       <details id="t7" style="margin-top:10px">
@@ -391,7 +410,7 @@ function saveStore() {
   try {
     localStorage.setItem(KEY, JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow,
+      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel,
     }));
   } catch { /* storage unavailable */ }
 }
@@ -406,6 +425,7 @@ const state = {
   site: null,
   follow: saved.follow ?? true,
   useFcSeeing: saved.useFcSeeing ?? true,
+  wxModel: saved.wxModel || 'best_match',
   filters: saved.filters || [],
   boost: saved.boost ?? 30,
   tn: { rig: 'any', types: ['gal', 'neb', 'snr', 'pn'], minAlt: 30, minFill: 15, maxPanels: 4, avoidMoon: true, sort: 'best', ...(saved.tn || {}) },
@@ -1546,6 +1566,8 @@ function nightWindow() {
   const t0 = Date.UTC(y, mo - 1, d, 16) - tz * 3600e3;
   return { t0, t1: t0 + 16 * 3600e3 };
 }
+const CMP_MODELS = [{ id: 'ecmwf_ifs025', name: 'ECMWF' }, { id: 'icon_seamless', name: 'ICON' }, { id: 'gfs_seamless', name: 'GFS' }];
+const MODEL_NAME = { best_match: 'best match', ecmwf_ifs025: 'ECMWF', icon_seamless: 'ICON', gfs_seamless: 'GFS' };
 function scheduleWeather() { clearTimeout(wxTimer); wxTimer = setTimeout(loadWeather, 600); }
 async function loadWeather() {
   const seq = ++wxSeq;
@@ -1556,11 +1578,12 @@ async function loadWeather() {
   if ($('#t7').open) load7Timer();
   $('#wxSum').innerHTML = '<span class="note">Loading forecast…</span>'; $('#wx').innerHTML = '';
   try {
-    const [w, a] = await Promise.all([
-      fetchJson(`https://api.open-meteo.com/v1/forecast?${q}&hourly=${WX_HOURLY}`),
+    const [w, a, c] = await Promise.all([
+      fetchJson(`https://api.open-meteo.com/v1/forecast?${q}&hourly=${WX_HOURLY}&models=${state.wxModel}`),
       fetchJson(`https://air-quality-api.open-meteo.com/v1/air-quality?${q}&hourly=aerosol_optical_depth,dust`).catch(() => null),
+      fetchJson(`https://api.open-meteo.com/v1/forecast?${q}&hourly=cloud_cover&models=${CMP_MODELS.map((m) => m.id).join(',')}`).catch(() => null),
     ]);
-    if (seq === wxSeq) { wxLast = [w, a, t0, t1]; renderWeather(w, a, t0, t1); }
+    if (seq === wxSeq) { wxLast = [w, a, t0, t1, c]; renderWeather(w, a, t0, t1, c); }
   } catch (e) {
     if (seq === wxSeq) { $('#wxSum').innerHTML = `<span class="note">${esc(e.message)}</span>`; $('#wx').innerHTML = ''; }
   }
@@ -1616,8 +1639,8 @@ function seeingAt(W, ms, elev) {
 const LAYER_NAME = { ground: 'ground layer (<1 km)', low: 'low air (1–3 km)', mid: 'mid air (3–8 km)', high: 'jet / tropopause (>8 km)' };
 const airmassFactor = (alt) => Math.pow(1 / Math.sin(Math.max(alt, 5) * D2R), 0.6);
 
-function renderWeather(w, a, t0, t1) {
-  const W = hourlyLookup(w), Aq = hourlyLookup(a);
+function renderWeather(w, a, t0, t1, c) {
+  const W = hourlyLookup(w), Aq = hourlyLookup(a), Cm = hourlyLookup(c);
   const { lat, lon, tz } = state.site;
   const elev = w.elevation || 0;
   const t = state.target;
@@ -1640,6 +1663,8 @@ function renderWeather(w, a, t0, t1) {
     ['Low',      (ms) => val('cloud_cover_low', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
     ['Mid',      (ms) => val('cloud_cover_mid', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
     ['High',     (ms) => val('cloud_cover_high', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
+    ...(c ? [null, ...CMP_MODELS.map((m) => [m.name + ' ☁', (ms) => Cm('cloud_cover_' + m.id, ms), (v) => grade(v, 20, 60), (v) => Math.round(v),
+      () => `Total cloud % from the ${m.name} model`])] : []),
     null,
     ['Seeing ″', (ms) => H[ms].see?.total, seeCls, seeFmt, (ms) => { const s = H[ms].see; return s ? `Zenith ${s.total.toFixed(2)}″ · free air ${s.free.toFixed(2)}″ · mostly ${LAYER_NAME[s.main]}` : ''; }],
     ['Free air', (ms) => H[ms].see?.free, (v) => grade(v, 1.0, 1.8), seeFmt],
@@ -1671,7 +1696,8 @@ function renderWeather(w, a, t0, t1) {
   html += `</div><div class="wxnote">Bold hours are astronomical darkness. <b>Seeing</b> is a model estimate (FWHM at 500 nm, zenith) from temperature and wind at 16 heights up to ~16 km; hover a cell for the main turbulent layer.
     <b>Free air</b> leaves out the lowest 1 km, which depends heavily on your own site. <b>On target</b> adds the extra air at the target's altitude.
     <b>Jet</b> = strongest wind at 300–200 hPa (9–12 km). <b>Cool</b> = how fast the air is cooling; above 2°/h expect tube currents, so let the scope cool.
-    Dew gap under 2° means dew risk. AOD above 0.6 means a milky, dusty sky.</div>`;
+    Dew gap under 2° means dew risk. AOD above 0.6 means a milky, dusty sky.
+    ${c ? `<b>ECMWF / ICON / GFS ☁</b> = total cloud from three independent models; when they disagree, the forecast is uncertain.` : ''}</div>`;
   $('#wx').innerHTML = html;
 
   // Summary over dark hours
@@ -1697,20 +1723,29 @@ function renderWeather(w, a, t0, t1) {
   if (cloud == null) { $('#wxSum').innerHTML = '<span class="note">No forecast data for this night.</span>'; return; }
   const tag = (c, txt) => `<span class="tag ${c}">${txt}</span>`;
   const sky = cloud < 20 ? tag('good', 'clear') : cloud < 50 ? tag('warn', 'partly cloudy') : tag('bad', 'cloudy');
+  const cmp = c ? CMP_MODELS.map((m) => ({ n: m.name, v: avg((ms) => Cm('cloud_cover_' + m.id, ms)) })).filter((x) => x.v != null) : [];
+  let cmpTxt = '';
+  if (cmp.length >= 2) {
+    const vs = cmp.map((x) => x.v), spread = Math.max(...vs) - Math.min(...vs);
+    const list = cmp.map((x) => `${x.n} ${Math.round(x.v)}%`).join(', ');
+    cmpTxt = `<br>${spread >= 30 ? tag('warn', 'models disagree') : spread >= 15 ? tag('warn', 'models differ a little') : tag('good', 'models agree')} <span class="note">(cloud: ${list})</span>`;
+  }
   const seeTag = (v) => v == null ? '—' : tag(v < 1.5 ? 'good' : v < 2.5 ? 'warn' : 'bad', (v >= 6 ? '6+' : v.toFixed(1)) + '″');
   const transp = aod == null ? '—' : aod < 0.3 ? tag('good', 'good') : aod < 0.6 ? tag('warn', 'hazy') : tag('bad', 'dusty');
   const wind = gust == null ? '' : gust < 15 ? '' : gust < 30 ? ` · gusts to ${Math.round(gust)} km/h` : ` · ${tag('bad', 'windy')} gusts ${Math.round(gust)} km/h`;
   const dewTxt = dew != null && dew < 2 ? ` · ${tag('bad', 'dew risk')}` : hum != null && hum > 85 ? ` · ${tag('warn', 'humid')}` : '';
   const coolTxt = cool != null && cool > 2 ? ` · ${tag('warn', 'fast cooling')} let the scope cool` : '';
   $('#wxSum').innerHTML = `${dark.length ? 'Dark hours' : 'Tonight'}: ${sky} ${cloud.toFixed(0)}% cloud · Transparency ${transp} <span class="note">(AOD ${aod != null ? aod.toFixed(2) : '—'})</span><br>
-    Seeing ${seeTag(seeZ)} zenith <span class="note">(free air ${seeF != null ? seeF.toFixed(1) + '″' : '—'})</span>${t && seeT != null ? ` · ${seeTag(seeT)} on ${esc(normId(t.mainId || t.name))}` : ''}${mainLayer ? `<br><span class="note">Main turbulence: ${LAYER_NAME[mainLayer]}</span>` : ''}${wind}${dewTxt}${coolTxt}`;
+    Seeing ${seeTag(seeZ)} zenith <span class="note">(free air ${seeF != null ? seeF.toFixed(1) + '″' : '—'})</span>${t && seeT != null ? ` · ${seeTag(seeT)} on ${esc(normId(t.mainId || t.name))}` : ''}${mainLayer ? `<br><span class="note">Main turbulence: ${LAYER_NAME[mainLayer]}</span>` : ''}${wind}${dewTxt}${coolTxt}${cmpTxt}<br><span class="note">Model: ${MODEL_NAME[state.wxModel] || state.wxModel}</span>`;
 }
+const inQatar = (lat, lon) => lat > 24.4 && lat < 26.3 && lon > 50.6 && lon < 51.8;
 function renderWxLinks() {
   const { lat, lon } = state.site;
   const mb = `${Math.abs(lat).toFixed(3)}${lat >= 0 ? 'N' : 'S'}${Math.abs(lon).toFixed(3)}${lon >= 0 ? 'E' : 'W'}`;
-  $('#wxLinks').innerHTML = `Forecast: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (ECMWF/GFS models, CAMS dust). Light pollution: <a href="https://djlorenz.github.io/astronomy/lp/" target="_blank" rel="noopener">Light Pollution Atlas</a> by D. Lorenz (Bortle is approximate).
+  $('#wxLinks').innerHTML = `Forecast: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (ECMWF, ICON and GFS models, CAMS dust). Light pollution: <a href="https://djlorenz.github.io/astronomy/lp/" target="_blank" rel="noopener">Light Pollution Atlas</a> by D. Lorenz (Bortle is approximate).
     For a seeing forecast in arcseconds: <a href="https://www.meteoblue.com/en/weather/outdoorsports/seeing/${mb}" target="_blank" rel="noopener">meteoblue seeing</a> ·
-    <a href="https://clearoutside.com/forecast/${lat.toFixed(2)}/${lon.toFixed(2)}" target="_blank" rel="noopener">Clear Outside</a>`;
+    <a href="https://clearoutside.com/forecast/${lat.toFixed(2)}/${lon.toFixed(2)}" target="_blank" rel="noopener">Clear Outside</a>${inQatar(lat, lon) ? ` ·
+    <a href="https://qweather.gov.qa/CAA/Index.aspx" target="_blank" rel="noopener">Qatar Met (QMD)</a>` : ''}`;
 }
 
 /* ---------- Moon phase panel ---------- */
@@ -1978,6 +2013,8 @@ $('#boost').value = state.boost;
 $('#boost').addEventListener('input', (e) => { state.boost = +e.target.value; applyBoost(); saveStore(); });
 $('#survey').addEventListener('change', (e) => setSurveyChoice(e.target.value));
 $('#seeing').value = state.seeing;
+$('#wxModel').value = state.wxModel;
+$('#wxModel').addEventListener('change', (e) => { state.wxModel = e.target.value; saveStore(); track('wx-model/' + state.wxModel); loadWeather(); });
 $('#useFc').checked = state.useFcSeeing;
 $('#useFc').addEventListener('change', (e) => { state.useFcSeeing = e.target.checked; saveStore(); renderRigStats(); });
 $('#seeing').addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (v > 0) { state.seeing = v; saveStore(); renderRigStats(); } });
@@ -2007,7 +2044,7 @@ $('#addCam').addEventListener('click', () => $('#camTbl tbody').insertAdjacentHT
 $('#eqDlg').addEventListener('click', (e) => { if (e.target.matches('[data-del]')) e.target.closest('tr').remove(); });
 
 /* ---------- Backup: export / import ---------- */
-const BACKUP_KEYS = ['scopes', 'cams', 'filters', 'rigs', 'survey', 'boost', 'tn', 'seeing', 'useFcSeeing', 'defaultSite', 'follow'];
+const BACKUP_KEYS = ['scopes', 'cams', 'filters', 'rigs', 'survey', 'boost', 'tn', 'seeing', 'useFcSeeing', 'defaultSite', 'follow', 'wxModel'];
 const blobToDataUrl = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); });
 const dataUrlToBlob = async (u) => (await fetch(u)).blob();
 function downloadFile(name, text) {
@@ -2077,6 +2114,13 @@ for (const [sel, ev, name, once] of [
   ['#t7', 'toggle', '7timer-open', true], ['#wxReload', 'click', 'forecast-refresh', true], ['#night', 'change', 'night-change', true],
 ]) $(sel)?.addEventListener(ev, () => track(name, once));
 $('main').addEventListener('drop', () => track('image-add'));
+
+// Old GitHub Pages address: point people to the new home and help them carry their setup over
+if (/github\.io$/i.test(location.hostname)) {
+  $('#movedBanner').hidden = false;
+  $('#movedExport').addEventListener('click', () => { $('#exportImgs').checked = true; exportBackup(); track('moved-export'); });
+  $('#movedClose').addEventListener('click', () => { $('#movedBanner').hidden = true; });
+}
 
 renderRigs();
 renderLoc();

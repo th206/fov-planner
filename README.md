@@ -1,27 +1,75 @@
 # Multi-Rig FOV Planner
-[Try it out!](https://th206.github.io/fov-planner/).
-<br>
-Plan astrophotography framing with **several telescope + camera combinations overlaid on the same target at once**.
 
-- Search any object by name (M31, NGC 7000, "Pelican Nebula") or coordinates (`20 58 47 +44 20` or `314.7 44.3`)
-- Object details from SIMBAD: type, coordinates, apparent size, magnitude
-- One colored frame per rig, each with its own rotation, reducer factor and mosaic (cols × rows, overlap %)
-- Per-rig FOV, image scale (″/px), sampling vs. your seeing, and whether the target fits
-- **Tonight's targets, filtered for your rigs**: ~2,200 objects ranked for the chosen night and place. Targets too small for a rig (below a minimum frame fill) or needing more mosaic panels than you allow are hidden. Shows fit (% of frame, or mosaic size), usable dark hours above your minimum altitude, peak altitude and Moon; galaxies and clusters can count only moon-free hours. Categories: galaxies, nebulae, Lynds bright nebulae (LBN), Lynds dark nebulae (LDN), supernova remnants, planetary nebulae, clusters. Pick a target to load it; mosaics set the rig's grid and rotation
-- Altitude chart for any night, with twilight shading and hours above 30° in astronomical darkness
-- Conditions for any place: search by name or coordinates, or use your device location, and save one place as the default
-- Night forecast from [Open-Meteo](https://open-meteo.com/): hourly cloud (low/mid/high), humidity, dew risk, wind gusts and dust/haze (aerosol optical depth)
-- Seeing estimate in arcseconds from a layered turbulence model (Dewan / Tatarskii) using temperature and wind at 16 pressure levels (1000–100 hPa): zenith, free-air (above 1 km) and on-target (corrected for altitude), plus the main turbulent layer, jet-stream wind (300–200 hPa) and cooling rate. The rig sampling check can use the forecast seeing
-- 7Timer ASTRO chart, plus links to meteoblue and Clear Outside
-- Sky surveys: DSS2, Pan-STARRS, 2MASS, H-alpha, Mellinger — with a "Faint detail" slider that stretches the survey to bring out faint nebulosity
-- My images: overlay your own plate-solved images (JPG/PNG + astrometry.net `wcs.fits` or ASTAP `.wcs`, or a FITS, mono or RGB, optionally with a separate `wcs.fits`; linear data is auto-stretched, stretched data shown as-is; unsolved FITS are placed approximately from RA/DEC + focal length + pixel size with a rotation slider). Stored in your browser and shown automatically when that part of the sky is in view, with opacity and flip controls
-- Editable equipment list. Rigs and settings are saved in your browser
-- Export / Import backup (optionally with your images) to keep a copy, move your setup to another device, or share it with friends
+**[Try it out at fovplanner.com](https://fovplanner.com/)**
 
-Object catalog from [OpenNGC](https://github.com/mattiaverga/OpenNGC) (CC-BY-SA 4.0) and the Sharpless (1959) catalog; Lynds dark (LDN) and bright (LBN) nebulae and Green's Galactic SNR catalogue (2025, optically visible remnants only) are loaded live from [VizieR](https://vizier.cds.unistra.fr/) and cached for 90 days. Uses [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) from jsDelivr.
+Plan astrophotography with **several telescope + camera combinations overlaid on the same target at once**, and find out which targets actually suit *your* equipment, tonight, under *your* sky.
+
+## Framing
+
+- Search any object by name (M31, NGC 7000, "Pelican Nebula", LDN 1622) or coordinates (`20 58 47 +44 20` or `314.7 44.3`)
+- One colored frame per rig, each with its own rotation, reducer/barlow factor and mosaic (cols × rows, overlap %)
+- Per-rig field of view, image scale (″/px) and sampling check against your seeing (or the forecast seeing)
+- Fit check for every rig: how much of the frame the target fills, or how much of the target one frame covers and what mosaic you need
+- Target details (type, size, magnitude, max altitude, best season) in a collapsible panel; sizes for large nebulae come from a curated catalog
+
+## Tonight's targets, filtered for your rigs
+
+- ~2,200 objects ranked for the chosen night and place: galaxies, nebulae, Lynds bright (LBN) and dark (LDN) nebulae, optically visible supernova remnants, planetary nebulae and clusters
+- **Targets too small for a rig are hidden**; big ones show the mosaic they need (up to the panel limit you set)
+- Usable dark hours above your minimum altitude, peak altitude, and Moon distance; galaxies, dark nebulae and clusters can count only moon-free hours
+- Aware of each rig's filter: narrowband/dual-band rigs get emission targets, broadband rigs count moonlight on everything
+- Pick a target from the dropdown to load it; for mosaics the rig's grid and rotation are set for you
+
+## Filters
+
+- Add your filters under Equipment: type (narrowband Hα / OIII / SII or a full set, LRGB set, dual-band, light-pollution, UV/IR cut), size (1.25″ to 50 mm) and optional bandwidth
+- **Filter suggestion per rig and target**: colour cameras get dual-band, light-pollution or UV/IR-cut filters; mono cameras get narrowband or LRGB, choosing the right lines for the target (Hα for HII regions, Hα + OIII for supernova remnants, OIII + Hα for planetary nebulae)
+- Vignetting check: warns when a filter is too small for the sensor and tells you which size the sensor needs
+
+## Conditions
+
+- Any place: search by name or coordinates, use your device location, and save one place as the default
+- **Sky brightness and Bortle class** for the location, from the Light Pollution Atlas, with an alert above Bortle 5
+- **Moon**: phase, illumination, rise/set, next Full and New Moon, and a two-week strip — tap a night to plan it
+- Hourly night forecast from [Open-Meteo](https://open-meteo.com/): cloud (low/mid/high), humidity, dew risk, wind gusts and dust/haze (aerosol optical depth)
+- Choose the forecast model (best match, ECMWF, ICON or GFS), and compare total cloud from all three side by side: a "models disagree" flag shows when the forecast is uncertain
+- **Seeing estimate** in arcseconds from a layered turbulence model (Dewan / Tatarskii) using temperature and wind at 16 pressure levels (1000–100 hPa): zenith, free-air (above 1 km) and on-target, plus the main turbulent layer, jet-stream wind and cooling rate
+- 7Timer ASTRO chart, plus links to meteoblue and Clear Outside (and Qatar Met / QMD for locations in Qatar)
+- Altitude chart for any night, with twilight shading
+
+## Sky imagery
+
+- Surveys: **NSNS narrowband** ([OIII]·Hα·[SII] color, Hα, [OIII]) and **IPHAS Hα** to see faint nebulae and supernova remnants, plus DSS2, Pan-STARRS, 2MASS, Mellinger and wide-field Hα
+- **Auto** mode: narrowband for nebulae, DSS color for galaxies and clusters
+- "Faint detail" slider to stretch the survey and bring out faint nebulosity
+
+## My images
+
+- Overlay your own plate-solved images: JPG/PNG + astrometry.net `wcs.fits` or ASTAP `.wcs`, or a FITS (mono or RGB, optionally with a separate `wcs.fits`)
+- Linear FITS data is auto-stretched; stretched data is shown as-is; unsolved FITS are placed approximately from RA/DEC + focal length + pixel size, with a rotation slider
+- Stored in your browser and shown automatically whenever that part of the sky is in view, with opacity and flip controls
+
+## Your data
+
+- Equipment, rigs, filters, settings, default location and images are saved **only in your own browser** — nothing is uploaded, and other users never see or change your setup
+- Export / Import a backup file (optionally with images) to keep a copy, move to another device, or share your setup with friends
+- Anonymous usage statistics via GoatCounter (no cookies, no personal data)
+
+## Credits
+
+- Object catalog: [OpenNGC](https://github.com/mattiaverga/OpenNGC) (CC-BY-SA 4.0) and the Sharpless (1959) catalog; Lynds dark (LDN) and bright (LBN) nebulae and Green's Galactic SNR catalogue (2025, optically visible remnants only) loaded live from [VizieR](https://vizier.cds.unistra.fr/) and cached for 90 days
+- Object details: [SIMBAD](https://simbad.cds.unistra.fr/) (CDS)
+- Sky viewer: [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) (CDS)
+- Narrowband imagery: Northern Sky Narrowband Survey by Stefan Ziegenbalg ([CC BY-NC-SA 4.0](http://www.simg.de/nebulae3/dr0_2/)); IPHAS DR2 Hα
+- Light pollution: [Light Pollution Atlas](https://djlorenz.github.io/astronomy/lp/) by David Lorenz (Bortle class is an approximation from sky brightness)
+- Weather and air quality: [Open-Meteo](https://open-meteo.com/); astronomical forecast chart: [7Timer!](https://www.7timer.info/)
+
+Single file (`index.html`), no build step. Hosted on Cloudflare Pages.
 
 ## Notes
 
 - Rotation is the position angle of the sensor's short axis, measured east of north (0° = long side runs east–west).
 - Frames follow the view center by default. Drag the sky to compose, or untick the option to keep them pinned.
-- SIMBAD often has no size for large nebulae. A few common ones have built-in approximate sizes, and you can type a size for any target.
+- Set the **Sensor** type (mono / color) for each camera under Equipment if its name doesn't make it obvious — filter suggestions depend on it.
+- Catalog sizes for some large faint nebulae are approximate; you can type a size for any target.
+- After an update, press Ctrl+F5 (or reopen the page on a phone) if you still see the old version.
