@@ -328,7 +328,7 @@
   <table id="scopeTbl"><thead><tr><th>Name</th><th>Focal length mm</th><th>Aperture mm (not f-ratio)</th><th></th></tr></thead><tbody></tbody></table>
   <button id="addScope" class="icon">+ Telescope</button>
   <h3>Cameras</h3>
-  <table id="camTbl"><thead><tr><th>Name</th><th>Width px</th><th>Height px</th><th>Pixel µm</th><th></th></tr></thead><tbody></tbody></table>
+  <table id="camTbl"><thead><tr><th>Name</th><th>Width px</th><th>Height px</th><th>Pixel µm</th><th>Sensor</th><th></th></tr></thead><tbody></tbody></table>
   <button id="addCam" class="icon">+ Camera</button>
   <h3>Filters</h3>
   <table id="filtTbl"><thead><tr><th>Name</th><th>Type</th><th>Size</th><th></th></tr></thead><tbody></tbody></table>
@@ -1291,6 +1291,57 @@ function onSizeInput() {
   }
 }
 
+/* ---------- Filter recommendation (per rig, for the current target) ---------- */
+const camKind = (c) => (c.kind && c.kind !== 'auto' ? c.kind
+  : /\bMM\b|mono|\dMM/i.test(c.name) ? 'mono' : /\bMC\b|\dMC|color|colour|osc|seestar|dwarf|canon|nikon|sony/i.test(c.name) ? 'osc' : 'unknown');
+const filterLine = (f) => (/h\s*-?\s*a(lpha)?\b|hα|h-alpha/i.test(f.name) ? 'ha' : /o\s*-?\s*iii|o3\b|oiii/i.test(f.name) ? 'oiii' : /s\s*-?\s*ii\b|s2\b|sii/i.test(f.name) ? 'sii' : null);
+// what a target wants: 'ha' | 'snr' | 'pn' (emission flavours) or 'bb' (broadband)
+function targetNeeds(t) {
+  if (!t) return null;
+  const co = CAT_INDEX.get(catKey(t.mainId || t.name || ''));
+  const typ = co?.t;
+  if (typ) return typ === 'SNR' ? 'snr' : typ === 'PN' ? 'pn' : ['HII', 'EmN', 'Neb', 'Cl+N', 'Sh2', 'LBN'].includes(typ) ? 'ha' : 'bb';
+  const ot = t.otype || '';
+  if (/^SNR/.test(ot)) return 'snr';
+  if (/^PN/.test(ot)) return 'pn';
+  if (/^(HII|ISM|EmO|GNe|SFR|Cld|MoC|BNe)/.test(ot)) return 'ha';
+  return ot ? 'bb' : null;
+}
+function moonTonight() {
+  const { t0, t1 } = nightWindow(), mid = (t0 + t1) / 2, ph = moonPhase(mid);
+  const t = state.target; let sep = 180;
+  if (t) { const [mr, md] = moonRaDec(mid); sep = angSep(t.ra, t.dec, mr, md); }
+  return { illum: ph.illum, sep };
+}
+function recommendFilter(r, g) {
+  const need = targetNeeds(state.target); if (!need) return null;
+  const kind = camKind(g.c), moon = moonTonight(), bright = moon.illum > 0.5 && moon.sep < 90;
+  const diag = Math.hypot(g.c.wpx, g.c.hpx) * g.c.px / 1000, fr = g.fr || 5;
+  const usable = (state.filters || []).filter((f) => (FILTER_CLEAR[f.size] || 46) >= diag);       // skip filters that would vignette
+  const byType = (ty) => usable.filter((f) => f.type === ty);
+  const lines = { ha: 'Hα', snr: 'Hα + OIII', pn: 'OIII + Hα' }[need];
+  let pick = [], why = '', generic = '';
+  if (need === 'bb') {
+    // colour cameras use a UV/IR-cut / clear / luminance-type filter, not an RGB set
+    const bbOk = byType('bb').filter((f) => kind !== 'osc' || !/rgb|\b[rgb]\b|red|green|blue/i.test(f.name));
+    pick = bbOk.length ? bbOk.slice(0, 1) : byType('lp').slice(0, 1);
+    why = `broadband target${bright ? '; the Moon is bright tonight, so contrast will suffer — a darker night is better' : ''}`;
+    generic = kind === 'osc' ? 'a UV/IR-cut filter (or no filter)' : 'L + RGB filters';
+    if (!pick.length && kind === 'osc') why += '; a colour camera can shoot it with no filter at all';
+  } else {
+    const nb = byType('nb'), dual = byType('dual');
+    const want = need === 'ha' ? ['ha', 'sii', 'oiii'] : need === 'snr' ? ['ha', 'oiii', 'sii'] : ['oiii', 'ha'];
+    const nbSet = want.map((l) => nb.find((f) => filterLine(f) === l)).filter(Boolean);
+    if (kind === 'osc') pick = dual.length ? dual.slice(0, 1) : nbSet.slice(0, 1);
+    else pick = nbSet.length ? nbSet : dual.slice(0, 1);
+    if (!pick.length && !bright) pick = byType('lp').slice(0, 1);
+    why = `${{ ha: 'emission nebula (mostly Hα)', snr: 'supernova remnant (Hα and OIII)', pn: 'planetary nebula (OIII-strong)' }[need]}${bright ? `; the Moon is ${Math.round(moon.illum * 100)}% lit, narrowband cuts through it` : ''}`;
+    generic = kind === 'osc' ? `a dual-band ${lines} filter` : `narrowband ${lines} filters`;
+  }
+  const skipped = (state.filters || []).length - usable.length;
+  return { pick, why, generic, skipped };
+}
+
 /* ---------- Rig list ---------- */
 function opts(list, sel) { return list.map((x) => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}</option>`).join(''); }
 function renderRigs() {
@@ -1355,8 +1406,18 @@ function renderRigStats() {
       if (clear < diag) vig = `<span class="tag bad">vignetting likely</span> ${sz} filter is smaller than the ${diag.toFixed(1)} mm sensor diagonal`;
       else if (clear < diag + 20 / fr) vig = `<span class="tag warn">edge vignetting possible</span> ${sz} filter on a ${diag.toFixed(1)} mm sensor at f/${fr.toFixed(1)}; keep it close to the sensor`;
     }
+    let rec = '';
+    const rf = state.target && recommendFilter(r, g);
+    if (rf) {
+      const names = rf.pick.map((f) => esc(f.name)).join(' + ');
+      const already = rf.pick.length && rf.pick.some((f) => f.id === r.filter);
+      rec = rf.pick.length
+        ? `<span class="tag ${already ? 'good' : 'warn'}">filter</span> ${already ? 'using a good choice' : 'suggest'} <b>${names}</b>${!already ? ` <button type="button" class="icon ghost usefilt" data-fid="${rf.pick[0].id}">Use</button>` : ''} <span class="note">· ${rf.why}</span>`
+        : `<span class="tag warn">filter</span> ${rf.generic} would suit this target <span class="note">· ${rf.why}${(state.filters || []).length ? '' : '; add your filters under Equipment'}</span>`;
+      if (rf.skipped && rf.pick.length === 0 && (state.filters || []).length) rec += ` <span class="note">(${rf.skipped} of your filters would vignette on this sensor)</span>`;
+    }
     box.innerHTML = `FOV <b>${fmtAngle(g.w)} × ${fmtAngle(g.h)}</b>${r.cols * r.rows > 1 ? ` · mosaic <b>${fmtAngle(g.mw)} × ${fmtAngle(g.mh)}</b>` : ''}<br>
-      ${g.fl.toFixed(0)} mm${g.fr ? ` · f/${g.fr.toFixed(1)}` : ''} · <b>${g.scale.toFixed(2)}″/px</b> <span class="tag ${samp[0]}">${samp[1]}</span>${fit ? '<br>' + fit : ''}${vig ? '<br>' + vig : ''}`;
+      ${g.fl.toFixed(0)} mm${g.fr ? ` · f/${g.fr.toFixed(1)}` : ''} · <b>${g.scale.toFixed(2)}″/px</b> <span class="tag ${samp[0]}">${samp[1]}</span>${fit ? '<br>' + fit : ''}${vig ? '<br>' + vig : ''}${rec ? '<br>' + rec : ''}`;
   }
 }
 function onRigInput(e) {
@@ -1755,7 +1816,7 @@ $('#useDefault').addEventListener('click', () => { state.site = { ...state.defau
 
 /* ---------- Equipment dialog ---------- */
 function eqRowScope(s) { return `<tr data-id="${s.id}"><td><input data-f="name" value="${esc(s.name)}"></td><td><input data-f="fl" type="number" min="1" value="${s.fl}"></td><td><input data-f="ap" type="number" min="0" step="0.1" value="${s.ap ?? ''}"></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
-function eqRowCam(c) { return `<tr data-id="${c.id}"><td><input data-f="name" value="${esc(c.name)}"></td><td><input data-f="wpx" type="number" min="1" value="${c.wpx}"></td><td><input data-f="hpx" type="number" min="1" value="${c.hpx}"></td><td><input data-f="px" type="number" min="0.1" step="0.01" value="${c.px}"></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
+function eqRowCam(c) { return `<tr data-id="${c.id}"><td><input data-f="name" value="${esc(c.name)}"></td><td><input data-f="wpx" type="number" min="1" value="${c.wpx}"></td><td><input data-f="hpx" type="number" min="1" value="${c.hpx}"></td><td><input data-f="px" type="number" min="0.1" step="0.01" value="${c.px}"></td><td><select data-f="kind">${selOpts([['auto', 'Auto'], ['mono', 'Mono'], ['osc', 'Color (OSC)']], c.kind || 'auto')}</select></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
 const FILTER_TYPES = [['bb', 'Broadband (L, RGB, UV/IR cut)'], ['lp', 'Light-pollution / CLS'], ['dual', 'Dual-band (Hα+OIII)'], ['nb', 'Narrowband (Hα, OIII, SII)']];
 const FILTER_SIZES = [['1.25', '1.25″'], ['31', '31 mm'], ['36', '36 mm'], ['2', '2″'], ['50', '50 mm'], ['front', 'front / clip-in']];
 const FILTER_CLEAR = { '1.25': 26, '31': 31, '36': 36, '2': 46, '50': 50, front: 999 };   // usable clear aperture, mm
@@ -1792,6 +1853,12 @@ $('#searchForm').addEventListener('submit', (e) => { e.preventDefault(); search(
 $('#rigs').addEventListener('input', onRigInput);
 $('#rigs').addEventListener('change', onRigInput);
 $('#rigs').addEventListener('click', (e) => {
+  const b = e.target.closest('.usefilt'); if (!b) return;
+  const el = b.closest('.rig'), r = state.rigs.find((x) => x.id === el.dataset.id); if (!r) return;
+  r.filter = b.dataset.fid; el.querySelector('[data-k=filter]').value = r.filter;
+  saveStore(); renderRigStats(); scheduleTonight(); track('filter-use');
+});
+$('#rigs').addEventListener('click', (e) => {
   if (e.target.dataset.act !== 'del') return;
   const id = e.target.closest('.rig').dataset.id;
   state.rigs = state.rigs.filter((r) => r.id !== id); saveStore(); renderRigs(); drawFrames();
@@ -1826,7 +1893,7 @@ for (const k of ['lat', 'lon', 'tz']) {
   $('#' + k).addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (isFinite(v)) { state.site[k] = v; if (k !== 'tz') state.site.name = 'Custom location'; siteChanged(true); } });
 }
 { const now = new Date(Date.now() + state.site.tz * 3600e3); $('#night').value = now.toISOString().slice(0, 10); }
-$('#night').addEventListener('change', () => { drawAltChart(); loadWeather(); scheduleTonight(); renderMoon(); });
+$('#night').addEventListener('change', () => { drawAltChart(); loadWeather(); scheduleTonight(); renderMoon(); renderRigStats(); });
 $('#wxReload').addEventListener('click', () => { loadWeather(); if ($('#t7').open) load7Timer(); });
 function load7Timer() {
   const { lat, lon } = state.site;
