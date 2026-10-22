@@ -126,6 +126,10 @@
   .moonday b { color: var(--text); font-weight: 600; }
   .backup { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
   .locbar { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .skybox { font-size: 12.5px; line-height: 1.5; }
+  .skybox .bort { display: inline-block; min-width: 22px; text-align: center; font-weight: 700; border-radius: 5px; padding: 0 5px; color: #0b0e14; }
+  .skyalert { margin-top: 4px; padding: 6px 8px; border-radius: 7px; border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent);
+    background: color-mix(in srgb, var(--warn) 12%, transparent); font-size: 12px; line-height: 1.45; }
   .locname { font-size: 13px; font-weight: 600; }
   .locname .note { font-weight: 400; }
   .wxsum b { font-weight: 600; }
@@ -228,6 +232,7 @@
       <h2>Conditions <button class="icon ghost" id="wxReload" title="Refresh forecast">↻</button></h2>
       <div class="locbar">
         <div class="locname"><span id="locName">—</span> <span id="locTag"></span></div>
+        <div id="skyBox" class="skybox"></div>
         <form id="placeForm" class="row" autocomplete="off">
           <input id="placeQ" placeholder="Place name or lat, lon" aria-label="Location" style="flex:1">
           <button type="submit" class="icon">Go</button>
@@ -1180,6 +1185,7 @@ function renderTonight() {
   $('#tnMoonInfo').innerHTML = darkHours < 0.5 ? 'No astronomical darkness this night at this location.'
     : `${darkHours.toFixed(1)} h of darkness · Moon ${Math.round(illum * 100)}% lit, up ${moonUpHours.toFixed(1)} h of it`
       + (o.avoidMoon && illum > 0.25 ? ' · galaxies, dark nebulae &amp; clusters only count moon-free hours' : '')
+      + (state.sky?.bortle > 5 ? ` · <b>Bortle ${state.sky.bortle} sky</b>: emission nebulae are your best bet` : '')
       + (extState === 'loading' ? ' · loading LDN/LBN/SNR catalogs…' : extState === 'failed' ? ' · LDN/LBN/SNR catalogs could not be loaded (offline?)' : '');
   if (!items.length) {
     $('#tnList').innerHTML = `<div class="note" style="padding:6px 0">Nothing suits ${o.rig === 'any' ? 'your rigs' : 'this rig'} with these filters. Try lowering the minimum altitude or fill, allowing more mosaic panels, or adding a type.</div>`;
@@ -1331,7 +1337,7 @@ function recommendFilter(r, g) {
   const order = (a, b) => (fits(b) - fits(a)) || bw(a) - bw(b) || (FILTER_CLEAR[b.size] || 46) - (FILTER_CLEAR[a.size] || 46);
   // which filter types suit this camera + target
   const emission = need !== 'bb';
-  const allowed = kind === 'osc' ? (emission ? ['dual', 'lp'] : ['uvir', 'lp'])
+  const allowed = kind === 'osc' ? (emission ? ['dual', 'lp'] : (state.sky?.bortle > 5 ? ['lp', 'uvir'] : ['uvir', 'lp']))
     : kind === 'mono' ? (emission ? ['nb'] : ['bb'])
     : (emission ? ['nb', 'dual', 'lp'] : ['bb', 'uvir', 'lp']);                 // unknown sensor: anything sensible
   const lines = { ha: 'Hα', snr: 'Hα + OIII', pn: 'OIII + Hα' }[need];
@@ -1358,11 +1364,13 @@ function recommendFilter(r, g) {
     : sizeTip && !pick.length ? `; use ${sizeTip} filters on this ${diag.toFixed(1)} mm sensor` : '';
   const what = { ha: 'emission nebula (mostly Hα)', snr: 'supernova remnant (Hα + OIII)', pn: 'planetary nebula (OIII-strong)', bb: 'broadband target' }[need];
   const camTxt = kind === 'osc' ? 'colour camera' : kind === 'mono' ? 'mono camera' : 'camera';
+  const sk = state.sky?.bortle;
+  const skyTxt = sk > 5 ? (emission ? `; Bortle ${sk} sky — narrowband/dual-band is the way to go` : `; Bortle ${sk} sky — broadband targets will be washed out here`) : '';
   const moonTxt = bright ? (emission ? `; the Moon is ${Math.round(moon.illum * 100)}% lit, narrowband/dual-band cuts through it` : `; the Moon is ${Math.round(moon.illum * 100)}% lit — a darker night is better`) : '';
   const generic = kind === 'osc' ? (emission ? `a dual-band (${lines}) filter` : 'a UV/IR-cut filter, or no filter')
     : kind === 'mono' ? (emission ? `narrowband ${lineLabel} filters` : 'L + RGB filters') : (emission ? 'narrowband or dual-band filters' : 'broadband filters');
   if (label) pick.label = label;
-  return { pick, why: `${what}, ${camTxt}${moonTxt}${sizeNote}`, generic, skipped: 0 };
+  return { pick, why: `${what}, ${camTxt}${moonTxt}${skyTxt}${sizeNote}`, generic, skipped: 0 };
 }
 
 /* ---------- Rig list ---------- */
@@ -1700,7 +1708,7 @@ function renderWeather(w, a, t0, t1) {
 function renderWxLinks() {
   const { lat, lon } = state.site;
   const mb = `${Math.abs(lat).toFixed(3)}${lat >= 0 ? 'N' : 'S'}${Math.abs(lon).toFixed(3)}${lon >= 0 ? 'E' : 'W'}`;
-  $('#wxLinks').innerHTML = `Forecast: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (ECMWF/GFS models, CAMS dust).
+  $('#wxLinks').innerHTML = `Forecast: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (ECMWF/GFS models, CAMS dust). Light pollution: <a href="https://djlorenz.github.io/astronomy/lp/" target="_blank" rel="noopener">Light Pollution Atlas</a> by D. Lorenz (Bortle is approximate).
     For a seeing forecast in arcseconds: <a href="https://www.meteoblue.com/en/weather/outdoorsports/seeing/${mb}" target="_blank" rel="noopener">meteoblue seeing</a> ·
     <a href="https://clearoutside.com/forecast/${lat.toFixed(2)}/${lon.toFixed(2)}" target="_blank" rel="noopener">Clear Outside</a>`;
 }
@@ -1767,6 +1775,65 @@ $('#moonStrip').addEventListener('click', (e) => {
   $('#night').value = el.dataset.d; $('#night').dispatchEvent(new Event('change'));
 });
 
+/* ---------- Sky brightness (Bortle) from the Light Pollution Atlas by David Lorenz (VIIRS-based) ---------- */
+const LP_YEARS = [2025, 2024];
+const lpTileCache = new Map();
+const lpMod = (n, m) => ((n % m) + m) % m;
+async function lpTile(year, tx, ty) {
+  const key = `${year}_${tx}_${ty}`;
+  if (!lpTileCache.has(key)) lpTileCache.set(key, (async () => {
+    const r = await fetch(`https://djlorenz.github.io/astronomy/binary_tiles/${year}/binary_tile_${tx}_${ty}.dat.gz`);
+    if (!r.ok) throw new Error('atlas ' + r.status);
+    return new Int8Array(await new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+  })().catch((e) => { lpTileCache.delete(key); throw e; }));
+  return lpTileCache.get(key);
+}
+async function skyBrightness(lat, lon) {                 // → { sqm, ratio, year } or null outside the atlas (|lat| > 75)
+  const lf = lpMod(lon + 180, 360), la = lat + 65, tx = Math.floor(lf / 5) + 1, ty = Math.floor(la / 5) + 1;
+  if (ty < 1 || ty > 28) return null;
+  for (const year of LP_YEARS) {
+    try {
+      const d = await lpTile(year, tx, ty);
+      const ix = Math.round(120 * (lf - 5 * (tx - 1) + 1 / 240)), iy = Math.round(120 * (la - 5 * (ty - 1) + 1 / 240));
+      let v = 128 * d[0] + d[1];
+      for (let i = 1; i < iy; i++) v += d[600 * i + 1];
+      for (let i = 1; i < ix; i++) v += d[600 * (iy - 1) + 1 + i];
+      const ratio = (5 / 195) * (Math.exp(0.0195 * v) - 1);     // artificial / natural sky brightness
+      return { ratio, sqm: 22 - 5 * Math.log(1 + ratio) / Math.log(100), year };
+    } catch { /* try the previous year's atlas */ }
+  }
+  throw new Error('atlas unavailable');
+}
+// approximate Bortle class from zenith sky brightness (mag/arcsec²)
+const sqmToBortle = (m) => (m >= 21.99 ? 1 : m >= 21.89 ? 2 : m >= 21.69 ? 3 : m >= 20.49 ? 4 : m >= 19.5 ? 5 : m >= 18.94 ? 6 : m >= 18.38 ? 7 : m >= 17.8 ? 8 : 9);
+const BORTLE_TXT = { 1: 'excellent dark sky', 2: 'truly dark sky', 3: 'rural sky', 4: 'rural/suburban transition', 5: 'suburban sky',
+  6: 'bright suburban sky', 7: 'suburban/urban transition', 8: 'city sky', 9: 'inner-city sky' };
+const BORTLE_COL = ['', '#1e1e1e', '#3a4a7a', '#2f8f3a', '#b8a625', '#e0802a', '#f05a49', '#fb998a', '#c8c8c8', '#ffffff'];
+state.sky = null;
+let skySeq = 0;
+async function updateSky() {
+  const seq = ++skySeq, { lat, lon } = state.site;
+  $('#skyBox').innerHTML = '<span class="note">Checking light pollution…</span>';
+  try {
+    const sb = await skyBrightness(lat, lon);
+    if (seq !== skySeq) return;
+    if (!sb) { state.sky = null; $('#skyBox').innerHTML = '<span class="note">No light-pollution data this far north/south.</span>'; return; }
+    const b = sqmToBortle(sb.sqm);
+    state.sky = { ...sb, bortle: b };
+    const fg = b >= 8 ? '#0b0e14' : '#fff';
+    let html = `You are under a <span class="bort" style="background:${BORTLE_COL[b]};color:${fg}">Bortle ${b}</span> sky · ${BORTLE_TXT[b]}
+      <span class="note">(${sb.sqm.toFixed(2)} mag/arcsec², ${sb.year} atlas)</span>`;
+    if (b > 5) html += `<div class="skyalert">⚠ <b>Bright sky (Bortle ${b}).</b> Galaxies, reflection and dark nebulae will be hard to capture here —
+      ${b >= 8 ? 'expect a strong sky glow even in long exposures. ' : ''}Emission nebulae with narrowband or dual-band filters work best; for broadband targets
+      consider a darker site.</div>`;
+    $('#skyBox').innerHTML = html;
+    track('bortle/' + b, true);
+  } catch {
+    if (seq === skySeq) { state.sky = null; $('#skyBox').innerHTML = '<span class="note">Light-pollution data could not be loaded.</span>'; }
+  }
+  renderRigStats(); scheduleTonight();
+}
+
 /* ---------- Location ---------- */
 const sameSite = (a, b) => a && b && Math.abs(a.lat - b.lat) < 1e-4 && Math.abs(a.lon - b.lon) < 1e-4;
 function renderLoc() {
@@ -1779,6 +1846,7 @@ function renderLoc() {
   for (const k of ['lat', 'lon', 'tz']) if (document.activeElement !== $('#' + k)) $('#' + k).value = s[k];
 }
 function siteChanged(debounced) {
+  clearTimeout(siteChanged.t); siteChanged.t = setTimeout(updateSky, debounced ? 800 : 0);
   scheduleTonight(); renderMoon();
   renderLoc(); drawAltChart();
   if (state.target) { renderTarget(); }
@@ -2013,6 +2081,7 @@ $('main').addEventListener('drop', () => track('image-add'));
 renderRigs();
 renderLoc();
 renderMoon();
+updateSky();
 loadExtCatalogs();
 // target details: open by default on wide screens, remembered after that
 { let open = null; try { open = localStorage.getItem('mrp.tgtOpen'); } catch {}
