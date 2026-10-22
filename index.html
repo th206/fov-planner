@@ -1329,13 +1329,24 @@ function recommendFilter(r, g) {
     generic = kind === 'osc' ? 'a UV/IR-cut filter (or no filter)' : 'L + RGB filters';
     if (!pick.length && kind === 'osc') why += '; a colour camera can shoot it with no filter at all';
   } else {
-    const nb = byType('nb'), dual = byType('dual');
+    const bw = (f) => { const m = f.name.match(/(\d+(?:\.\d+)?)\s*nm/i); return m ? +m[1] : 99; };
+    const narrowFirst = (a, b) => bw(a) - bw(b) || (FILTER_CLEAR[b.size] || 46) - (FILTER_CLEAR[a.size] || 46);
+    const nb = byType('nb').sort(narrowFirst), dual = byType('dual').sort(narrowFirst);
     const want = need === 'ha' ? ['ha', 'sii', 'oiii'] : need === 'snr' ? ['ha', 'oiii', 'sii'] : ['oiii', 'ha'];
     const nbSet = want.map((l) => nb.find((f) => filterLine(f) === l)).filter(Boolean);
-    if (kind === 'osc') pick = dual.length ? dual.slice(0, 1) : nbSet.slice(0, 1);
-    else pick = nbSet.length ? nbSet : dual.slice(0, 1);
+    const nbNoLine = nb.filter((f) => !filterLine(f));                       // a narrowband set named by brand, e.g. "Antlia 3nm"
+    const lineLabel = want.map((l) => ({ ha: 'Hα', oiii: 'OIII', sii: 'SII' })[l]).join(' + ');
+    let note = '';
+    if (kind === 'osc') {
+      pick = dual.length ? dual.slice(0, 1) : nbSet.length ? nbSet.slice(0, 1) : nbNoLine.slice(0, 1);
+      if (!dual.length && pick.length) note = '; with a colour camera, Hα alone works but is slow — a dual-band filter suits it better';
+    } else {
+      if (nbSet.length) pick = nbSet;
+      else if (nbNoLine.length) { pick = nbNoLine.slice(0, 1); pick.label = `${pick[0].name} (${lineLabel})`; }
+      else if (dual.length) { pick = dual.slice(0, 1); note = '; dual-band on a mono camera records Hα and OIII together — separate narrowband filters are better'; }
+    }
     if (!pick.length && !bright) pick = byType('lp').slice(0, 1);
-    why = `${{ ha: 'emission nebula (mostly Hα)', snr: 'supernova remnant (Hα and OIII)', pn: 'planetary nebula (OIII-strong)' }[need]}${bright ? `; the Moon is ${Math.round(moon.illum * 100)}% lit, narrowband cuts through it` : ''}`;
+    why = `${{ ha: 'emission nebula (mostly Hα)', snr: 'supernova remnant (Hα and OIII)', pn: 'planetary nebula (OIII-strong)' }[need]}${bright ? `; the Moon is ${Math.round(moon.illum * 100)}% lit, narrowband cuts through it` : ''}${note}`;
     generic = kind === 'osc' ? `a dual-band ${lines} filter` : `narrowband ${lines} filters`;
   }
   const skipped = (state.filters || []).length - usable.length;
@@ -1409,7 +1420,7 @@ function renderRigStats() {
     let rec = '';
     const rf = state.target && recommendFilter(r, g);
     if (rf) {
-      const names = rf.pick.map((f) => esc(f.name)).join(' + ');
+      const names = rf.pick.label ? esc(rf.pick.label) : rf.pick.map((f) => esc(f.name)).join(' + ');
       const already = rf.pick.length && rf.pick.some((f) => f.id === r.filter);
       rec = rf.pick.length
         ? `<span class="tag ${already ? 'good' : 'warn'}">filter</span> ${already ? 'using a good choice' : 'suggest'} <b>${names}</b>${!already ? ` <button type="button" class="icon ghost usefilt" data-fid="${rf.pick[0].id}">Use</button>` : ''} <span class="note">· ${rf.why}</span>`
