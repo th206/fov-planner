@@ -331,7 +331,7 @@
   <table id="camTbl"><thead><tr><th>Name</th><th>Width px</th><th>Height px</th><th>Pixel µm</th><th>Sensor</th><th></th></tr></thead><tbody></tbody></table>
   <button id="addCam" class="icon">+ Camera</button>
   <h3>Filters</h3>
-  <table id="filtTbl"><thead><tr><th>Name</th><th>Type</th><th>Size</th><th></th></tr></thead><tbody></tbody></table>
+  <table id="filtTbl"><thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Bandwidth nm</th><th></th></tr></thead><tbody></tbody></table>
   <button id="addFilt" class="icon">+ Filter</button>
   <div class="note" style="margin-top:6px">Pick a filter on each rig. The size is checked against the sensor for vignetting; the type tells Tonight's targets which objects suit the rig and whether the Moon matters.</div>
   <div class="dlgbtns">
@@ -1140,13 +1140,13 @@ function computeTonight() {
     if (90 - Math.abs(lat - c.dec) < o.minAlt) continue;          // never gets high enough
     let best = null;
     for (const { r, g } of rigs) {
-      const ft = filterById(r.filter)?.type;
-      if ((ft === 'nb' || ft === 'dual') && BROADBAND.has(c.t)) continue;     // galaxies/clusters need broadband filters
+      const ft = filterById(r.filter) && fType(filterById(r.filter));
+      if ((ft === 'nb' || ft === 'dual') && BROADBAND.has(c.t)) continue;   // ft is grouped: Hα/OIII/SII count as 'nb'     // galaxies/clusters need broadband filters
       const f = fitFor(c, g, opt); if (f && (!best || fitRank(f) > fitRank(best.f))) best = { r, g, f, ft };
     }
     if (!best) continue;
     // broadband-filtered rigs are hurt by moonlight on every target; narrowband rigs only matter for broadband targets
-    const moonSensitive = o.avoidMoon && illum > 0.25 && (BROADBAND.has(c.t) || best.ft === 'bb' || best.ft === 'lp');
+    const moonSensitive = o.avoidMoon && illum > 0.25 && (BROADBAND.has(c.t) || ['bb', 'uvir', 'lp'].includes(best.ft));
     let good = 0, peak = -90, peakMs = 0, moonSep = 180;
     for (const s of steps) {
       const alt = altAz(c.ra, c.dec, s.ms, lat, lon);
@@ -1294,7 +1294,7 @@ function onSizeInput() {
 /* ---------- Filter recommendation (per rig, for the current target) ---------- */
 const camKind = (c) => (c.kind && c.kind !== 'auto' ? c.kind
   : /\bMM\b|mono|\dMM/i.test(c.name) ? 'mono' : /\bMC\b|\dMC|color|colour|osc|seestar|dwarf|canon|nikon|sony/i.test(c.name) ? 'osc' : 'unknown');
-const filterLine = (f) => (/h\s*-?\s*a(lpha)?\b|hα|h-alpha/i.test(f.name) ? 'ha' : /o\s*-?\s*iii|o3\b|oiii/i.test(f.name) ? 'oiii' : /s\s*-?\s*ii\b|s2\b|sii/i.test(f.name) ? 'sii' : null);
+const filterLine = (f) => (['ha', 'oiii', 'sii'].includes(f.type) ? f.type : null);   // from the Type dropdown, never the name
 // what a target wants: 'ha' | 'snr' | 'pn' (emission flavours) or 'bb' (broadband)
 function targetNeeds(t) {
   if (!t) return null;
@@ -1313,44 +1313,56 @@ function moonTonight() {
   if (t) { const [mr, md] = moonRaDec(mid); sep = angSep(t.ra, t.dec, mr, md); }
   return { illum: ph.illum, sep };
 }
+// filter type, upgrading old "broadband" entries that are really UV/IR-cut or clear filters
+const fType = (f) => (NB_TYPES.has(f.type) ? 'nb' : f.type);                         // group single-line filters with narrowband
+function sizeAdvice(diag, fr) {      // smallest filter format that clears this sensor (with a margin for the light cone)
+  const need = diag + 20 / fr;
+  return need <= 26 ? null : need <= 31 ? '31 mm' : need <= 36 ? '36 mm (or 2″)' : '2″';
+}
 function recommendFilter(r, g) {
   const need = targetNeeds(state.target); if (!need) return null;
   const kind = camKind(g.c), moon = moonTonight(), bright = moon.illum > 0.5 && moon.sep < 90;
   const diag = Math.hypot(g.c.wpx, g.c.hpx) * g.c.px / 1000, fr = g.fr || 5;
-  const usable = (state.filters || []).filter((f) => (FILTER_CLEAR[f.size] || 46) >= diag);       // skip filters that would vignette
-  const byType = (ty) => usable.filter((f) => f.type === ty);
+  const sizeTip = sizeAdvice(diag, fr);
+  const all = state.filters || [];
+  const fits = (f) => (FILTER_CLEAR[f.size] || 46) >= diag + 20 / fr;          // clears the sensor comfortably
+  const marginal = (f) => !fits(f) && (FILTER_CLEAR[f.size] || 46) >= diag;
+  const bw = (f) => (Number.isFinite(f.bw) && f.bw > 0 ? f.bw : 99);              // narrower first when you've entered a bandwidth
+  const order = (a, b) => (fits(b) - fits(a)) || bw(a) - bw(b) || (FILTER_CLEAR[b.size] || 46) - (FILTER_CLEAR[a.size] || 46);
+  // which filter types suit this camera + target
+  const emission = need !== 'bb';
+  const allowed = kind === 'osc' ? (emission ? ['dual', 'lp'] : ['uvir', 'lp'])
+    : kind === 'mono' ? (emission ? ['nb'] : ['bb'])
+    : (emission ? ['nb', 'dual', 'lp'] : ['bb', 'uvir', 'lp']);                 // unknown sensor: anything sensible
   const lines = { ha: 'Hα', snr: 'Hα + OIII', pn: 'OIII + Hα' }[need];
-  let pick = [], why = '', generic = '';
-  if (need === 'bb') {
-    // colour cameras use a UV/IR-cut / clear / luminance-type filter, not an RGB set
-    const bbOk = byType('bb').filter((f) => kind !== 'osc' || !/rgb|\b[rgb]\b|red|green|blue/i.test(f.name));
-    pick = bbOk.length ? bbOk.slice(0, 1) : byType('lp').slice(0, 1);
-    why = `broadband target${bright ? '; the Moon is bright tonight, so contrast will suffer — a darker night is better' : ''}`;
-    generic = kind === 'osc' ? 'a UV/IR-cut filter (or no filter)' : 'L + RGB filters';
-    if (!pick.length && kind === 'osc') why += '; a colour camera can shoot it with no filter at all';
-  } else {
-    const bw = (f) => { const m = f.name.match(/(\d+(?:\.\d+)?)\s*nm/i); return m ? +m[1] : 99; };
-    const narrowFirst = (a, b) => bw(a) - bw(b) || (FILTER_CLEAR[b.size] || 46) - (FILTER_CLEAR[a.size] || 46);
-    const nb = byType('nb').sort(narrowFirst), dual = byType('dual').sort(narrowFirst);
-    const want = need === 'ha' ? ['ha', 'sii', 'oiii'] : need === 'snr' ? ['ha', 'oiii', 'sii'] : ['oiii', 'ha'];
-    const nbSet = want.map((l) => nb.find((f) => filterLine(f) === l)).filter(Boolean);
-    const nbNoLine = nb.filter((f) => !filterLine(f));                       // a narrowband set named by brand, e.g. "Antlia 3nm"
-    const lineLabel = want.map((l) => ({ ha: 'Hα', oiii: 'OIII', sii: 'SII' })[l]).join(' + ');
-    let note = '';
-    if (kind === 'osc') {
-      pick = dual.length ? dual.slice(0, 1) : nbSet.length ? nbSet.slice(0, 1) : nbNoLine.slice(0, 1);
-      if (!dual.length && pick.length) note = '; with a colour camera, Hα alone works but is slow — a dual-band filter suits it better';
-    } else {
-      if (nbSet.length) pick = nbSet;
-      else if (nbNoLine.length) { pick = nbNoLine.slice(0, 1); pick.label = `${pick[0].name} (${lineLabel})`; }
-      else if (dual.length) { pick = dual.slice(0, 1); note = '; dual-band on a mono camera records Hα and OIII together — separate narrowband filters are better'; }
+  const want = need === 'ha' ? ['ha', 'sii', 'oiii'] : need === 'snr' ? ['ha', 'oiii', 'sii'] : ['oiii', 'ha'];
+  const lineLabel = want.map((l) => ({ ha: 'Hα', oiii: 'OIII', sii: 'SII' })[l]).join(' + ');
+  let pick = [], label = '';
+  for (const ty of allowed) {                                                      // first allowed type you own wins
+    const cand = all.filter((f) => fType(f) === ty && (FILTER_CLEAR[f.size] || 46) >= diag).sort(order);
+    if (!cand.length) continue;
+    if (ty === 'nb') {
+      const set = want.map((l) => cand.find((f) => filterLine(f) === l)).filter(Boolean);
+      const kit = cand.find((f) => f.type === 'nb');                              // a full narrowband set
+      if (kit && set.length < want.length) { pick = [kit]; label = `${kit.name} (${lineLabel})`; break; }
+      if (set.length) { pick = set; break; }
+      pick = cand.slice(0, 1); break;
     }
-    if (!pick.length && !bright) pick = byType('lp').slice(0, 1);
-    why = `${{ ha: 'emission nebula (mostly Hα)', snr: 'supernova remnant (Hα and OIII)', pn: 'planetary nebula (OIII-strong)' }[need]}${bright ? `; the Moon is ${Math.round(moon.illum * 100)}% lit, narrowband cuts through it` : ''}${note}`;
-    generic = kind === 'osc' ? `a dual-band ${lines} filter` : `narrowband ${lines} filters`;
+    if (ty === 'lp' && emission && bright) continue;                               // L-Pro is weak under a bright Moon
+    pick = cand.slice(0, 1); break;
   }
-  const skipped = (state.filters || []).length - usable.length;
-  return { pick, why, generic, skipped };
+  // matching-type filters you own that are too small for this sensor
+  const tooSmall = all.filter((f) => allowed.includes(fType(f)) && (FILTER_CLEAR[f.size] || 46) < diag).map((f) => f.name);
+  const sizeNote = sizeTip && (tooSmall.length || pick.some(marginal))
+    ? `; this ${diag.toFixed(1)} mm sensor needs ${sizeTip} filters${tooSmall.length ? ` (${tooSmall.join(', ')} too small)` : ''}`
+    : sizeTip && !pick.length ? `; use ${sizeTip} filters on this ${diag.toFixed(1)} mm sensor` : '';
+  const what = { ha: 'emission nebula (mostly Hα)', snr: 'supernova remnant (Hα + OIII)', pn: 'planetary nebula (OIII-strong)', bb: 'broadband target' }[need];
+  const camTxt = kind === 'osc' ? 'colour camera' : kind === 'mono' ? 'mono camera' : 'camera';
+  const moonTxt = bright ? (emission ? `; the Moon is ${Math.round(moon.illum * 100)}% lit, narrowband/dual-band cuts through it` : `; the Moon is ${Math.round(moon.illum * 100)}% lit — a darker night is better`) : '';
+  const generic = kind === 'osc' ? (emission ? `a dual-band (${lines}) filter` : 'a UV/IR-cut filter, or no filter')
+    : kind === 'mono' ? (emission ? `narrowband ${lineLabel} filters` : 'L + RGB filters') : (emission ? 'narrowband or dual-band filters' : 'broadband filters');
+  if (label) pick.label = label;
+  return { pick, why: `${what}, ${camTxt}${moonTxt}${sizeNote}`, generic, skipped: 0 };
 }
 
 /* ---------- Rig list ---------- */
@@ -1828,11 +1840,13 @@ $('#useDefault').addEventListener('click', () => { state.site = { ...state.defau
 /* ---------- Equipment dialog ---------- */
 function eqRowScope(s) { return `<tr data-id="${s.id}"><td><input data-f="name" value="${esc(s.name)}"></td><td><input data-f="fl" type="number" min="1" value="${s.fl}"></td><td><input data-f="ap" type="number" min="0" step="0.1" value="${s.ap ?? ''}"></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
 function eqRowCam(c) { return `<tr data-id="${c.id}"><td><input data-f="name" value="${esc(c.name)}"></td><td><input data-f="wpx" type="number" min="1" value="${c.wpx}"></td><td><input data-f="hpx" type="number" min="1" value="${c.hpx}"></td><td><input data-f="px" type="number" min="0.1" step="0.01" value="${c.px}"></td><td><select data-f="kind">${selOpts([['auto', 'Auto'], ['mono', 'Mono'], ['osc', 'Color (OSC)']], c.kind || 'auto')}</select></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
-const FILTER_TYPES = [['bb', 'Broadband (L, RGB, UV/IR cut)'], ['lp', 'Light-pollution / CLS'], ['dual', 'Dual-band (Hα+OIII)'], ['nb', 'Narrowband (Hα, OIII, SII)']];
+const FILTER_TYPES = [['nb', 'Narrowband set: Hα + OIII + SII (mono)'], ['ha', 'Narrowband Hα (mono)'], ['oiii', 'Narrowband OIII (mono)'], ['sii', 'Narrowband SII (mono)'],
+  ['bb', 'LRGB set (mono)'], ['dual', 'Dual-band Hα + OIII (colour)'], ['lp', 'Light-pollution / CLS (colour)'], ['uvir', 'UV/IR cut / clear (colour)']];
+const NB_TYPES = new Set(['nb', 'ha', 'oiii', 'sii']);
 const FILTER_SIZES = [['1.25', '1.25″'], ['31', '31 mm'], ['36', '36 mm'], ['2', '2″'], ['50', '50 mm'], ['front', 'front / clip-in']];
 const FILTER_CLEAR = { '1.25': 26, '31': 31, '36': 36, '2': 46, '50': 50, front: 999 };   // usable clear aperture, mm
 const selOpts = (list, v) => list.map(([k, l]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${l}</option>`).join('');
-function eqRowFilt(f) { return `<tr data-id="${f.id}"><td><input data-f="name" value="${esc(f.name)}" placeholder="e.g. Antlia 3nm Hα"></td><td><select data-f="type">${selOpts(FILTER_TYPES, f.type || 'nb')}</select></td><td><select data-f="size">${selOpts(FILTER_SIZES, f.size || '2')}</select></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
+function eqRowFilt(f) { return `<tr data-id="${f.id}"><td><input data-f="name" value="${esc(f.name)}" placeholder="any name"></td><td><select data-f="type">${selOpts(FILTER_TYPES, f.type || 'nb')}</select></td><td><select data-f="size">${selOpts(FILTER_SIZES, f.size || '2')}</select></td><td><input data-f="bw" type="number" min="1" max="200" step="0.5" value="${f.bw ?? ''}" placeholder="optional" style="width:80px"></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
 const filterById = (id) => (state.filters || []).find((f) => f.id === id);
 function openEq(scopes = state.scopes, cams = state.cams) {
   $('#scopeTbl tbody').innerHTML = scopes.map(eqRowScope).join('');
@@ -1852,7 +1866,7 @@ function saveEq() {
   const cams = readTbl('#camTbl', ['wpx', 'hpx', 'px']).filter((c) => c.name && c.wpx > 0 && c.hpx > 0 && c.px > 0);
   if (!scopes.length || !cams.length) { alert('Keep at least one telescope and one camera.'); return; }
   state.scopes = scopes; state.cams = cams;
-  state.filters = readTbl('#filtTbl', []).filter((f) => f.name);
+  state.filters = readTbl('#filtTbl', ['bw']).filter((f) => f.name).map((f) => ({ ...f, bw: Number.isFinite(f.bw) ? f.bw : null }));
   for (const r of state.rigs) if (r.filter && !filterById(r.filter)) r.filter = '';
   for (const r of state.rigs) { if (!scopeById(r.scope)) r.scope = scopes[0].id; if (!camById(r.cam)) r.cam = cams[0].id; }
   saveStore(); $('#eqDlg').close(); renderRigs(); drawFrames();
