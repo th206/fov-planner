@@ -31,7 +31,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Any place: search by name or coordinates, use your device location, and save one place as the default
 - **Sky brightness and Bortle class** for the location, from the Light Pollution Atlas, with an alert above Bortle 5
 - **Moon**: phase, illumination, rise/set, next Full and New Moon, and a two-week strip — tap a night to plan it
-- Hourly night forecast from [Open-Meteo](https://open-meteo.com/): cloud (low/mid/high), humidity, dew risk, wind gusts and dust/haze (aerosol optical depth)
+- Hourly night forecast from [Open-Meteo](https://open-meteo.com/): cloud (low/mid/high), humidity, dew risk, wind gusts, rain chance and amount, storm risk (CAPE instability), and transparency from dust/haze (aerosol optical depth) plus visibility; a note after daytime rain explains its effect on transparency and seeing
 - Choose the forecast model (best match, ECMWF, ICON or GFS), and compare total cloud from all three side by side: a "models disagree" flag shows when the forecast is uncertain
 - **Seeing estimate** in arcseconds from a layered turbulence model (Dewan / Tatarskii) using temperature and wind at 16 pressure levels (1000–100 hPa): zenith, free-air (above 1 km) and on-target, plus the main turbulent layer, jet-stream wind and cooling rate
 - 7Timer ASTRO chart, plus links to meteoblue and Clear Outside (and Qatar Met / QMD for locations in Qatar)
