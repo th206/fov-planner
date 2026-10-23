@@ -31,6 +31,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Any place: search by name or coordinates, use your device location, and save one place as the default
 - **Sky brightness and Bortle class** for the location, from the Light Pollution Atlas, with an alert above Bortle 5
 - **Moon**: phase, illumination, rise/set, next Full and New Moon, and a two-week strip — tap a night to plan it
+- **Observed now**: the latest report from the nearest airport within 150 km (METAR, via the [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/)): measured visibility, cloud and its height, rain, thunderstorms, dust or fog, and wind, decoded into plain words
 - Hourly night forecast from [Open-Meteo](https://open-meteo.com/): cloud (low/mid/high), humidity, dew risk, wind gusts, rain chance and amount, storm risk (CAPE instability), and transparency from dust/haze (aerosol optical depth) plus visibility; a note after daytime rain explains its effect on transparency and seeing
 - Choose the forecast model (best match, ECMWF, ICON or GFS), and compare total cloud from all three side by side: a "models disagree" flag shows when the forecast is uncertain
 - **Seeing estimate** in arcseconds from a layered turbulence model (Dewan / Tatarskii) using temperature and wind at 16 pressure levels (1000–100 hPa): zenith, free-air (above 1 km) and on-target, plus the main turbulent layer, jet-stream wind and cooling rate
@@ -62,7 +63,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Sky viewer: [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) (CDS)
 - Narrowband imagery: Northern Sky Narrowband Survey by Stefan Ziegenbalg ([CC BY-NC-SA 4.0](http://www.simg.de/nebulae3/dr0_2/)); IPHAS DR2 Hα
 - Light pollution: [Light Pollution Atlas](https://djlorenz.github.io/astronomy/lp/) by David Lorenz (Bortle class is an approximation from sky brightness)
-- Weather and air quality: [Open-Meteo](https://open-meteo.com/); astronomical forecast chart: [7Timer!](https://www.7timer.info/)
+- Weather and air quality: [Open-Meteo](https://open-meteo.com/); airport observations: [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/) (Iowa State University); astronomical forecast chart: [7Timer!](https://www.7timer.info/)
 
 Single file (`index.html`), no build step. Hosted on Cloudflare Pages.
 

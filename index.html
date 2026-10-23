@@ -18,6 +18,8 @@
   #movedBanner { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 14px; font-size: 13px; line-height: 1.5;
     background: color-mix(in srgb, var(--accent) 22%, var(--panel)); border-bottom: 1px solid var(--accent); }
   #movedBanner a { color: var(--text); }
+  .obsnow:empty { display: none; }
+  .obsnow { margin-bottom: 6px; }
   #movedBanner button#movedExport { background: var(--accent); color: #08101f; border-color: var(--accent); font-weight: 600; padding: 3px 10px; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-size: 14px; }
   #app { display: grid; grid-template-columns: 380px 1fr; height: 100vh; }
@@ -265,6 +267,7 @@
           <option value="icon_seamless">ICON (Germany)</option>
           <option value="gfs_seamless">GFS (USA)</option>
         </select></label></div>
+      <div id="obsNow" class="wxsum obsnow"></div>
       <div id="wxSum" class="wxsum"></div>
       <div id="wx"></div>
       <details id="t7" style="margin-top:10px">
@@ -1569,6 +1572,94 @@ function nightWindow() {
 }
 const CMP_MODELS = [{ id: 'ecmwf_ifs025', name: 'ECMWF' }, { id: 'icon_seamless', name: 'ICON' }, { id: 'gfs_seamless', name: 'GFS' }];
 const MODEL_NAME = { best_match: 'best match', ecmwf_ifs025: 'ECMWF', icon_seamless: 'ICON', gfs_seamless: 'GFS' };
+
+/* ---------- Observed weather now: nearest airport METAR via Iowa Environmental Mesonet (CORS-enabled) ---------- */
+let obsSeq = 0;
+const ccCache = new Map();
+async function networkFor(lat, lon) {
+  const k = lat.toFixed(1) + ',' + lon.toFixed(1);
+  if (ccCache.has(k)) return ccCache.get(k);
+  const j = await fetchJson(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`, 8000);
+  const cc = j.countryCode, sub = (j.principalSubdivisionCode || '').split('-')[1];
+  const net = !cc ? null : cc === 'US' && sub ? `${sub}_ASOS` : cc === 'CA' && sub ? `CA_${sub}_ASOS` : `${cc}__ASOS`;
+  ccCache.set(k, net);
+  return net;
+}
+const WX_WORDS = { TS: 'thunderstorm', SH: 'showers', FZ: 'freezing', BL: 'blowing', DR: 'drifting', MI: 'shallow', BC: 'patches of', PR: 'partial',
+  DZ: 'drizzle', RA: 'rain', SN: 'snow', SG: 'snow grains', IC: 'ice crystals', PL: 'ice pellets', GR: 'hail', GS: 'small hail', UP: 'precipitation',
+  BR: 'mist', FG: 'fog', FU: 'smoke', VA: 'volcanic ash', DU: 'dust', SA: 'sand', HZ: 'haze', PY: 'spray', PO: 'dust whirls', SQ: 'squalls', FC: 'funnel cloud', SS: 'sandstorm', DS: 'duststorm' };
+const WX_RE = /^(\+|-|VC)?(MI|PR|BC|DR|BL|SH|TS|FZ)?((?:DZ|RA|SN|SG|IC|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PY|PO|SQ|FC|SS|DS)*)$/;
+function parseMetar(raw) {
+  const body = raw.split(/\s(?:RMK|NOSIG|TEMPO|BECMG)\b/)[0];
+  const tok = body.trim().split(/\s+/).slice(1);
+  let visKm = null, plus = false; const wx = [], clouds = []; let clear = false;
+  for (let i = 0; i < tok.length; i++) {
+    const t = tok[i];
+    if (t === 'CAVOK') { visKm = 10; plus = true; clear = true; continue; }
+    let m;
+    if ((m = t.match(/^(\d{4})(NDV)?$/)) && visKm == null) { const v = +m[1]; visKm = v >= 9999 ? 10 : v / 1000; plus = v >= 9999; continue; }
+    if ((m = t.match(/^(P|M)?(\d+)(?:\/(\d+))?SM$/)) && visKm == null) {
+      let mi = m[3] ? +m[2] / +m[3] : +m[2];
+      if (m[3] && /^\d$/.test(tok[i - 1] || '')) mi += +tok[i - 1];
+      visKm = mi * 1.609; plus = m[1] === 'P' || mi >= 10; continue;
+    }
+    if (/^(NSC|SKC|CLR|NCD)$/.test(t)) { clear = true; continue; }
+    if ((m = t.match(/^(FEW|SCT|BKN|OVC|VV)(\d{3}|\/\/\/)(CB|TCU)?$/))) { clouds.push({ c: m[1], h: m[2] === '///' ? null : +m[2] * 100, cb: m[3] }); continue; }
+    if (t.length >= 2 && !/^RE/.test(t) && (m = t.match(WX_RE)) && (m[2] || m[3])) {
+      const parts = [];
+      if (m[1] === '+') parts.push('heavy'); else if (m[1] === '-') parts.push('light');
+      if (m[2]) parts.push(WX_WORDS[m[2]]);
+      const pr = ((m[3] || '').match(/../g) || []).map((x) => WX_WORDS[x]);
+      if (pr.length) parts.push(pr.join(' and '));
+      let w = parts.join(' ').replace('thunderstorm rain', 'thunderstorm with rain').replace('showers rain', 'rain showers');
+      if (m[1] === 'VC') w += ' nearby';
+      wx.push({ w, code: t });
+    }
+  }
+  return { visKm, plus, wx, clouds, clear };
+}
+const CLOUD_TXT = { FEW: 'few clouds', SCT: 'scattered clouds', BKN: 'broken cloud', OVC: 'overcast', VV: 'sky obscured' };
+let obsLast = { k: '', t: 0 };
+async function loadObs(force) {
+  const { lat, lon, tz } = state.site;
+  const k = `${lat},${lon},${tz}`;
+  if (!force && k === obsLast.k && Date.now() - obsLast.t < 10 * 60e3) return;   // reuse for 10 minutes
+  obsLast = { k, t: Date.now() };
+  const seq = ++obsSeq, box = $('#obsNow');
+  try {
+    const net = await networkFor(lat, lon);
+    if (!net) { if (seq === obsSeq) box.innerHTML = ''; return; }
+    const j = await fetchJson(`https://mesonet.agron.iastate.edu/api/1/currents.json?network=${net}`, 10000);
+    const now = Date.now();
+    const cands = (j.data || []).filter((d) => d.raw && d.utc_valid && now - Date.parse(d.utc_valid) < 3 * 3600e3 && d.lat != null)
+      .map((d) => ({ ...d, km: distKm(lat, lon, d.lat, d.lon) })).filter((d) => d.km <= 150).sort((a, b) => a.km - b.km);
+    if (seq !== obsSeq) return;
+    if (!cands.length) { box.innerHTML = '<span class="note">Observed now: no recent airport weather report within 150 km.</span>'; return; }
+    const d = cands[0], m = parseMetar(d.raw);
+    if (m.visKm == null && d.vsby != null) { m.visKm = d.vsby * 1.609; m.plus = d.vsby >= 6; }
+    const tag = (c, txt) => `<span class="tag ${c}">${txt}</span>`;
+    const lt = new Date(Date.parse(d.utc_valid) + tz * 3600e3);
+    const hhmm = `${String(lt.getUTCHours()).padStart(2, '0')}:${String(lt.getUTCMinutes()).padStart(2, '0')}`;
+    const vis = m.visKm == null ? '' : `visibility ${tag(m.visKm >= 10 ? 'good' : m.visKm >= 5 ? 'warn' : 'bad', (m.plus ? '10+' : m.visKm < 1 ? m.visKm.toFixed(1) : Math.round(m.visKm)) + ' km')}`;
+    const worst = m.clouds.reduce((a, c) => (['FEW', 'SCT', 'BKN', 'OVC', 'VV'].indexOf(c.c) > ['FEW', 'SCT', 'BKN', 'OVC', 'VV'].indexOf(a?.c ?? '') ? c : a), null);
+    const cb = m.clouds.some((c) => c.cb === 'CB');
+    const sky = worst ? tag(worst.c === 'FEW' ? 'warn' : 'bad', CLOUD_TXT[worst.c] + (worst.h != null ? ` at ${(worst.h * 0.3048 / 1000).toFixed(1)} km` : ''))
+      : m.clear ? tag('good', 'no cloud') : '';
+    const wxTxt = m.wx.map((w) => tag(/thunder|heavy|storm|hail|fog|squall/.test(w.w) ? 'bad' : 'warn', esc(w.w))).join(' ');
+    const wind = d.sknt != null ? `wind ${Math.round(d.sknt * 1.852)} km/h${d.gust ? `, gusts ${Math.round(d.gust * 1.852)}` : ''}` : '';
+    const parts = [vis, sky, wxTxt, cb ? tag('bad', 'thunder clouds (CB)') : '', wind].filter(Boolean).join(' · ');
+    box.innerHTML = `<b>Observed now</b> <span class="note">at ${esc(d.name || d.station)} (${esc(d.station)}), ${Math.round(d.km)} km away, ${hhmm}:</span><br>${parts}
+      <br><span class="note" title="Raw airport report (METAR)" style="font-family:ui-monospace,monospace;font-size:11px">${esc(d.raw)}</span>`;
+  } catch {
+    obsLast.t = 0;
+    if (seq === obsSeq) box.innerHTML = '';
+  }
+}
+function distKm(la1, lo1, la2, lo2) {
+  const a = Math.sin((la2 - la1) * D2R / 2) ** 2 + Math.cos(la1 * D2R) * Math.cos(la2 * D2R) * Math.sin((lo2 - lo1) * D2R / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(a));
+}
+
 function scheduleWeather() { clearTimeout(wxTimer); wxTimer = setTimeout(loadWeather, 600); }
 async function loadWeather() {
   const seq = ++wxSeq;
@@ -1576,6 +1667,7 @@ async function loadWeather() {
   const day = (ms) => new Date(ms).toISOString().slice(0, 10);
   const q = `latitude=${lat}&longitude=${lon}&timezone=GMT&start_date=${day(t0)}&end_date=${day(t1)}`;
   renderWxLinks();
+  loadObs();
   if ($('#t7').open) load7Timer();
   $('#wxSum').innerHTML = '<span class="note">Loading forecast…</span>'; $('#wx').innerHTML = '';
   try {
@@ -1766,7 +1858,7 @@ const inQatar = (lat, lon) => lat > 24.4 && lat < 26.3 && lon > 50.6 && lon < 51
 function renderWxLinks() {
   const { lat, lon } = state.site;
   const mb = `${Math.abs(lat).toFixed(3)}${lat >= 0 ? 'N' : 'S'}${Math.abs(lon).toFixed(3)}${lon >= 0 ? 'E' : 'W'}`;
-  $('#wxLinks').innerHTML = `Forecast: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (ECMWF, ICON and GFS models, CAMS dust). Light pollution: <a href="https://djlorenz.github.io/astronomy/lp/" target="_blank" rel="noopener">Light Pollution Atlas</a> by D. Lorenz (Bortle is approximate).
+  $('#wxLinks').innerHTML = `Forecast: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (ECMWF, ICON and GFS models, CAMS dust). Observed weather: airport reports (METAR) via <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener">Iowa Environmental Mesonet</a>. Light pollution: <a href="https://djlorenz.github.io/astronomy/lp/" target="_blank" rel="noopener">Light Pollution Atlas</a> by D. Lorenz (Bortle is approximate).
     For a seeing forecast in arcseconds: <a href="https://www.meteoblue.com/en/weather/outdoorsports/seeing/${mb}" target="_blank" rel="noopener">meteoblue seeing</a> ·
     <a href="https://clearoutside.com/forecast/${lat.toFixed(2)}/${lon.toFixed(2)}" target="_blank" rel="noopener">Clear Outside</a>${inQatar(lat, lon) ? ` ·
     <a href="https://qweather.gov.qa/CAA/Index.aspx" target="_blank" rel="noopener">Qatar Met (QMD)</a>` : ''}`;
@@ -2048,7 +2140,7 @@ for (const k of ['lat', 'lon', 'tz']) {
 }
 { const now = new Date(Date.now() + state.site.tz * 3600e3); $('#night').value = now.toISOString().slice(0, 10); }
 $('#night').addEventListener('change', () => { drawAltChart(); loadWeather(); scheduleTonight(); renderMoon(); renderRigStats(); });
-$('#wxReload').addEventListener('click', () => { loadWeather(); if ($('#t7').open) load7Timer(); });
+$('#wxReload').addEventListener('click', () => { loadObs(true); loadWeather(); if ($('#t7').open) load7Timer(); });
 function load7Timer() {
   const { lat, lon } = state.site;
   const q = `lon=${lon.toFixed(3)}&lat=${lat.toFixed(3)}&ac=0&unit=metric&tzshift=0`;
