@@ -352,7 +352,7 @@
 <dialog id="eqDlg">
   <h2 style="margin-top:0">Equipment</h2>
   <h3>Telescopes / lenses</h3>
-  <table id="scopeTbl"><thead><tr><th>Name</th><th>Focal length mm</th><th>Aperture mm (not f-ratio)</th><th></th></tr></thead><tbody></tbody></table>
+  <table id="scopeTbl"><thead><tr><th>Name</th><th>Focal length mm</th><th>Aperture mm (not f-ratio)</th><th title="Highest gust (km/h) at which this scope still guides well on your mount. Leave empty for an estimate from size; adjust from experience.">Wind limit km/h</th><th></th></tr></thead><tbody></tbody></table>
   <button id="addScope" class="icon">+ Telescope</button>
   <h3>Cameras</h3>
   <table id="camTbl"><thead><tr><th>Name</th><th>Width px</th><th>Height px</th><th>Pixel µm</th><th>Sensor</th><th></th></tr></thead><tbody></tbody></table>
@@ -429,6 +429,7 @@ const state = {
   follow: saved.follow ?? true,
   useFcSeeing: saved.useFcSeeing ?? true,
   wxModel: saved.wxModel || 'best_match',
+  windBias: null,
   filters: saved.filters || [],
   boost: saved.boost ?? 30,
   tn: { rig: 'any', types: ['gal', 'neb', 'snr', 'pn'], minAlt: 30, minFill: 15, maxPanels: 4, avoidMoon: true, sort: 'best', ...(saved.tn || {}) },
@@ -440,6 +441,13 @@ const state = {
 state.site = { ...state.defaultSite };
 if (!state.tn.v2) { if (!state.tn.types.includes('snr')) state.tn.types.push('snr'); state.tn.v2 = true; }   // SNRs became their own category
 const scopeById = (id) => state.scopes.find((s) => s.id === id);
+/* Wind tolerance: wind load grows with tube size, and the guiding error that matters shrinks with focal length.
+   A rough starting point (km/h of gusts) that users refine from experience: 10" f/4 ≈ 20, 6" f/4 ≈ 30, small refractor ≈ 40. */
+function defaultWind(s) {
+  const ap = +s.ap || (+s.fl > 0 ? +s.fl / 5 : 100), fl = +s.fl || 500;
+  return Math.max(10, Math.min(50, Math.round((50 - 0.11 * ap - 0.004 * fl) / 5) * 5));
+}
+const windLimit = (s) => (s && Number.isFinite(s.wind) ? s.wind : s ? defaultWind(s) : 25);
 const camById = (id) => state.cams.find((c) => c.id === id);
 
 /* ---------- Geometry ---------- */
@@ -1489,6 +1497,7 @@ function onRigInput(e) {
     if (k === 'rot') el.querySelector('[data-rotv]').textContent = `${v}°`;
   }
   if (k === 'on' || k === 'scope' || k === 'cam') tonightSetup();   // keep rig names in Tonight's dropdown current
+  if (k === 'on' || k === 'scope') { clearTimeout(onRigInput.wt); onRigInput.wt = setTimeout(rerenderWeather, 300); }
   saveStore(); renderRigStats(); drawFrames(); scheduleTonight();
 }
 
@@ -1543,7 +1552,7 @@ function drawAltChart() {
 /* ---------- Weather & seeing (Open-Meteo) ---------- */
 const WX_HOURLY = ['cloud_cover', 'cloud_cover_low', 'cloud_cover_mid', 'cloud_cover_high', 'relative_humidity_2m', 'temperature_2m',
   'dew_point_2m', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m', 'surface_pressure',
-  'visibility', 'precipitation', 'precipitation_probability', 'cape',
+  'visibility', 'precipitation', 'precipitation_probability', 'cape', 'wind_speed_80m', 'wind_speed_120m',
   ...[1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200, 150, 100].flatMap((p) =>
     [`temperature_${p}hPa`, `wind_speed_${p}hPa`, `wind_direction_${p}hPa`, `geopotential_height_${p}hPa`])].join(',');
 let wxSeq = 0, wxTimer, wxLast = null;
@@ -1634,7 +1643,7 @@ async function loadObs(force) {
     const cands = (j.data || []).filter((d) => d.raw && d.utc_valid && now - Date.parse(d.utc_valid) < 3 * 3600e3 && d.lat != null)
       .map((d) => ({ ...d, km: distKm(lat, lon, d.lat, d.lon) })).filter((d) => d.km <= 150).sort((a, b) => a.km - b.km);
     if (seq !== obsSeq) return;
-    if (!cands.length) { box.innerHTML = '<span class="note">Observed now: no recent airport weather report within 150 km.</span>'; return; }
+    if (!cands.length) { state.windBias = null; box.innerHTML = '<span class="note">Observed now: no recent airport weather report within 150 km.</span>'; return; }
     const d = cands[0], m = parseMetar(d.raw);
     if (m.visKm == null && d.vsby != null) { m.visKm = d.vsby * 1.609; m.plus = d.vsby >= 6; }
     const tag = (c, txt) => `<span class="tag ${c}">${txt}</span>`;
@@ -1648,11 +1657,29 @@ async function loadObs(force) {
     const wxTxt = m.wx.map((w) => tag(/thunder|heavy|storm|hail|fog|squall/.test(w.w) ? 'bad' : 'warn', esc(w.w))).join(' ');
     const wind = d.sknt != null ? `wind ${Math.round(d.sknt * 1.852)} km/h${d.gust ? `, gusts ${Math.round(d.gust * 1.852)}` : ''}` : '';
     const parts = [vis, sky, wxTxt, cb ? tag('bad', 'thunder clouds (CB)') : '', wind].filter(Boolean).join(' · ');
+    let biasTxt = '';
+    state.windBias = null;
+    try {
+      const obsMs = Date.parse(d.utc_valid), hr = Math.floor(obsMs / 3600e3) * 3600e3;
+      const day = new Date(hr).toISOString().slice(0, 10);
+      const f = await fetchJson(`https://api.open-meteo.com/v1/forecast?latitude=${d.lat}&longitude=${d.lon}&timezone=GMT&start_date=${day}&end_date=${day}&hourly=wind_speed_10m,wind_gusts_10m&models=${state.wxModel}`, 8000);
+      const F = hourlyLookup(f), fw = F('wind_speed_10m', hr), fg = F('wind_gusts_10m', hr);
+      const ow = d.sknt != null ? d.sknt * 1.852 : null;
+      if (seq === obsSeq && ow != null && fw != null) {
+        const ratio = Math.max(0.4, Math.min(3, (ow + 4) / (fw + 4)));   // +4 km/h keeps light winds from giving silly ratios
+        state.windBias = { ratio, obs: ow, fc: fw, fcg: fg, station: d.station, km: d.km, at: obsMs };
+        const word = ratio >= 1.3 ? tag('bad', `forecast ${ratio.toFixed(1)}× too low`) : ratio <= 0.75 ? tag('good', 'forecast a bit high') : tag('good', 'forecast on track');
+        biasTxt = `<br>Wind check: measured ${Math.round(ow)} km/h vs forecast ${Math.round(fw)} km/h for this hour → ${word}${ratio >= 1.3 ? ' <span class="note">· tonight\'s gusts are scaled up to match</span>' : ''}${d.km > 40 ? ` <span class="note">(the airport is ${Math.round(d.km)} km from your site, so treat this as a hint)</span>` : ''}`;
+      }
+    } catch { /* comparison is optional */ }
+    if (seq !== obsSeq) return;
+    rerenderWeather();
     box.innerHTML = `<b>Observed now</b> <span class="note">at ${esc(d.name || d.station)} (${esc(d.station)}), ${Math.round(d.km)} km away, ${hhmm}:</span><br>${parts}
+${biasTxt}
       <br><span class="note" title="Raw airport report (METAR)" style="font-family:ui-monospace,monospace;font-size:11px">${esc(d.raw)}</span>`;
   } catch {
     obsLast.t = 0;
-    if (seq === obsSeq) box.innerHTML = '';
+    if (seq === obsSeq) { box.innerHTML = ''; state.windBias = null; }
   }
 }
 function distKm(la1, lo1, la2, lo2) {
@@ -1674,7 +1701,7 @@ async function loadWeather() {
     const [w, a, c] = await Promise.all([
       fetchJson(`https://api.open-meteo.com/v1/forecast?${q}&hourly=${WX_HOURLY}&models=${state.wxModel}`),
       fetchJson(`https://air-quality-api.open-meteo.com/v1/air-quality?${q}&hourly=aerosol_optical_depth,dust`).catch(() => null),
-      fetchJson(`https://api.open-meteo.com/v1/forecast?${q}&hourly=cloud_cover&models=${CMP_MODELS.map((m) => m.id).join(',')}`).catch(() => null),
+      fetchJson(`https://api.open-meteo.com/v1/forecast?${q}&hourly=cloud_cover,wind_gusts_10m&models=${CMP_MODELS.map((m) => m.id).join(',')}`).catch(() => null),
     ]);
     if (seq === wxSeq) { wxLast = [w, a, t0, t1, c]; renderWeather(w, a, t0, t1, c); }
   } catch (e) {
@@ -1750,6 +1777,14 @@ function renderWeather(w, a, t0, t1, c) {
   const jetAt = (ms) => { const v = [300, 250, 200].map((p) => val(`wind_speed_${p}hPa`, ms)).filter((x) => x != null); return v.length ? Math.max(...v) / 3.6 : undefined; };
   const coolAt = (ms) => { const a1 = val('temperature_2m', ms), a0 = val('temperature_2m', ms - 3600e3); return a1 == null || a0 == null ? undefined : a0 - a1; };
   const seeCls = (v) => grade(v, 1.5, 2.5);
+  // Wind: the worst gust across the chosen model and the three comparison models, scaled up when the airport shows the forecast running low
+  const wb = state.windBias, nowMs = Date.now();
+  const biasOn = wb && wb.ratio >= 1.3 && t0 - nowMs < 18 * 3600e3 && t1 > nowMs;   // only for tonight
+  const gustRaw = (ms) => { const v = [val('wind_gusts_10m', ms), ...CMP_MODELS.map((m) => Cm('wind_gusts_10m_' + m.id, ms))].filter((x) => x != null); return v.length ? Math.max(...v) : undefined; };
+  const gustAt = (ms) => { const g = gustRaw(ms); return g == null ? undefined : biasOn ? g * wb.ratio : g; };
+  const aloftAt = (ms) => { const v = [val('wind_speed_80m', ms), val('wind_speed_120m', ms)].filter((x) => x != null); return v.length ? Math.max(...v) : undefined; };
+  const rigScopes = [...new Map(state.rigs.filter((r) => r.on).map((r) => scopeById(r.scope)).filter(Boolean).map((sc) => [sc.id, sc])).values()];
+  const short = (n) => (n.length > 11 ? n.slice(0, 10) + '…' : n);
   const seeFmt = (v) => (v >= 6 ? '6+' : v.toFixed(1));
   const rows = [
     ['Cloud %',  (ms) => val('cloud_cover', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
@@ -1768,7 +1803,13 @@ function renderWeather(w, a, t0, t1, c) {
     ['Humidity', (ms) => val('relative_humidity_2m', ms), (v) => grade(v, 70, 85), (v) => Math.round(v)],
     ['Dew gap°', (ms) => { const t2 = val('temperature_2m', ms), d = val('dew_point_2m', ms); return t2 == null || d == null ? undefined : t2 - d; },
                  (v) => grade(v, 4, 2, false), (v) => Math.round(v)],
-    ['Gust km/h', (ms) => val('wind_gusts_10m', ms), (v) => grade(v, 15, 30), (v) => Math.round(v)],
+    ['Gust km/h', gustAt, (v) => grade(v, 15, 30), (v) => Math.round(v),
+                  (ms) => { const g = gustRaw(ms); return g == null ? '' : `Strongest gust of the four forecasts: ${Math.round(g)} km/h${biasOn ? ` × ${wb.ratio.toFixed(1)} (airport check) = ${Math.round(g * wb.ratio)}` : ''}`; }],
+    ['Wind 100m', aloftAt, (v) => grade(v, 20, 35), (v) => Math.round(v),
+                  (ms) => { const a = aloftAt(ms), w = val('wind_speed_10m', ms); return a == null ? '' : `Wind 80–120 m above ground: ${Math.round(a)} km/h${w != null && a > 2 * w + 10 ? ' — much stronger than at the ground; gusts can come down in bursts' : ''}`; }],
+    ...rigScopes.map((sc) => ['💨 ' + esc(short(sc.name)), (ms) => { const g = gustAt(ms); return g == null ? undefined : g / windLimit(sc); },
+      (v) => (v <= 1 ? 'g' : v <= 1.3 ? 'w' : 'b'), (v) => (v <= 1 ? '✓' : v <= 1.3 ? '~' : '✕'),
+      (ms) => { const g = gustAt(ms); return g == null ? '' : `${sc.name}: gusts ${Math.round(g)} km/h vs your limit ${windLimit(sc)} km/h${Number.isFinite(sc.wind) ? '' : ' (estimated — set it under Equipment)'}`; }]),
     ['Dust AOD', (ms) => Aq('aerosol_optical_depth', ms), (v) => grade(v, 0.3, 0.6), (v) => v.toFixed(1).replace(/^0/, '')],
     ['Visib km', (ms) => { const v = val('visibility', ms); return v == null ? undefined : v / 1000; }, (v) => grade(v, 20, 10, false), (v) => (v >= 99.5 ? '99' : Math.round(v)),
                  (ms) => { const v = val('visibility', ms); return v == null ? '' : `Visibility ${(v / 1000).toFixed(1)} km`; }],
@@ -1797,6 +1838,8 @@ function renderWeather(w, a, t0, t1, c) {
     <b>Free air</b> leaves out the lowest 1 km, which depends heavily on your own site. <b>On target</b> adds the extra air at the target's altitude.
     <b>Jet</b> = strongest wind at 300–200 hPa (9–12 km). <b>Cool</b> = how fast the air is cooling; above 2°/h expect tube currents, so let the scope cool.
     Dew gap under 2° means dew risk. AOD above 0.6 means a milky, dusty sky. <b>Visibility</b> under 10 km means haze, dust or moisture near the ground; both feed the transparency rating.
+    <b>Gust</b> is the strongest of the four forecasts${biasOn ? `, scaled ×${wb.ratio.toFixed(1)} because the ${esc(wb.station)} airport is measuring more wind than forecast` : ''}. <b>Wind 100m</b>: when it is much stronger than at the ground, gusts can come down in bursts even on a "calm" forecast.
+    <b>💨 rows</b> compare gusts with each telescope's wind limit (Equipment): ✓ fine, ~ marginal, ✕ too windy for good guiding.
     <b>Storm</b> is atmospheric instability (CAPE): ! = showers possible, !! = thunderstorms possible. Cloud forecasts often miss storms, so treat !! as a warning even when the cloud row looks clear.
     ${c ? `<b>ECMWF / ICON / GFS ☁</b> = total cloud from three independent models; when they disagree, the forecast is uncertain.` : ''}</div>`;
   $('#wx').innerHTML = html;
@@ -1812,7 +1855,12 @@ function renderWeather(w, a, t0, t1, c) {
   const cloud = avg((ms) => val('cloud_cover', ms));
   const hum = max((ms) => val('relative_humidity_2m', ms));
   const dew = min((ms) => { const t2 = val('temperature_2m', ms), d = val('dew_point_2m', ms); return t2 == null || d == null ? null : t2 - d; });
-  const gust = max((ms) => val('wind_gusts_10m', ms));
+  const gust = max(gustAt);
+  const aloft = median(aloftAt), ground = median((ms) => val('wind_speed_10m', ms));
+  const windRigs = rigScopes.map((sc) => {
+    const ok = use.filter((h) => { const g = gustAt(h.ms); return g != null && g <= windLimit(sc); }).length;
+    return { sc, ok, n: use.length };
+  });
   const aod = avg((ms) => Aq('aerosol_optical_depth', ms));
   const vis = median((ms) => { const v = val('visibility', ms); return v == null ? null : v / 1000; });
   const rainP = max((ms) => val('precipitation_probability', ms)), rainMm = max((ms) => val('precipitation', ms));
@@ -1849,10 +1897,13 @@ function renderWeather(w, a, t0, t1, c) {
     : cape != null && cape >= 300 ? ` · ${tag('warn', 'some instability')}` : '';
   const afterRain = preRain >= 0.5 ? `<br><span class="note">Rain earlier today (${preRain.toFixed(1)} mm): rain washes dust out of the air, but the air stays humid and turbulent for some hours after a storm, so seeing often improves only later in the night. Watch the dew gap.</span>` : '';
   const wind = gust == null ? '' : gust < 15 ? '' : gust < 30 ? ` · gusts to ${Math.round(gust)} km/h` : ` · ${tag('bad', 'windy')} gusts ${Math.round(gust)} km/h`;
+  const aloftTxt = aloft != null && ground != null && aloft >= 25 && aloft > 2 * ground + 10 ? ` · ${tag('warn', 'wind aloft')} ${Math.round(aloft)} km/h at 100 m, gusts may reach the ground` : '';
+  const windRigTxt = windRigs.length ? `<br><span class="note">Wind for guiding:</span> ${windRigs.map(({ sc, ok, n }) =>
+      `${esc(sc.name)} ${ok === n ? tag('good', 'all hours') : ok === 0 ? tag('bad', 'too windy') : tag('warn', `${ok} of ${n} h`)}`).join(' · ')}` : '';
   const dewTxt = dew != null && dew < 2 ? ` · ${tag('bad', 'dew risk')}` : hum != null && hum > 85 ? ` · ${tag('warn', 'humid')}` : '';
   const coolTxt = cool != null && cool > 2 ? ` · ${tag('warn', 'fast cooling')} let the scope cool` : '';
   $('#wxSum').innerHTML = `${dark.length ? 'Dark hours' : 'Tonight'}: ${sky} ${cloud.toFixed(0)}% cloud · Transparency ${transp} <span class="note">(${transpNote || '—'})</span>${rainTxt}${stormTxt}<br>
-    Seeing ${seeTag(seeZ)} zenith <span class="note">(free air ${seeF != null ? seeF.toFixed(1) + '″' : '—'})</span>${t && seeT != null ? ` · ${seeTag(seeT)} on ${esc(normId(t.mainId || t.name))}` : ''}${mainLayer ? `<br><span class="note">Main turbulence: ${LAYER_NAME[mainLayer]}</span>` : ''}${wind}${dewTxt}${coolTxt}${cmpTxt}${afterRain}<br><span class="note">Model: ${MODEL_NAME[state.wxModel] || state.wxModel}</span>`;
+    Seeing ${seeTag(seeZ)} zenith <span class="note">(free air ${seeF != null ? seeF.toFixed(1) + '″' : '—'})</span>${t && seeT != null ? ` · ${seeTag(seeT)} on ${esc(normId(t.mainId || t.name))}` : ''}${mainLayer ? `<br><span class="note">Main turbulence: ${LAYER_NAME[mainLayer]}</span>` : ''}${wind}${aloftTxt}${dewTxt}${coolTxt}${windRigTxt}${cmpTxt}${afterRain}<br><span class="note">Model: ${MODEL_NAME[state.wxModel] || state.wxModel}</span>`;
 }
 const inQatar = (lat, lon) => lat > 24.4 && lat < 26.3 && lon > 50.6 && lon < 51.8;
 function renderWxLinks() {
@@ -2057,7 +2108,7 @@ $('#setDefault').addEventListener('click', () => { state.defaultSite = { ...stat
 $('#useDefault').addEventListener('click', () => { state.site = { ...state.defaultSite }; locMsg(''); siteChanged(false); });
 
 /* ---------- Equipment dialog ---------- */
-function eqRowScope(s) { return `<tr data-id="${s.id}"><td><input data-f="name" value="${esc(s.name)}"></td><td><input data-f="fl" type="number" min="1" value="${s.fl}"></td><td><input data-f="ap" type="number" min="0" step="0.1" value="${s.ap ?? ''}"></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
+function eqRowScope(s) { return `<tr data-id="${s.id}"><td><input data-f="name" value="${esc(s.name)}"></td><td><input data-f="fl" type="number" min="1" value="${s.fl}"></td><td><input data-f="ap" type="number" min="0" step="0.1" value="${s.ap ?? ''}"></td><td><input data-f="wind" type="number" min="3" max="100" step="1" value="${Number.isFinite(s.wind) ? s.wind : ''}" placeholder="≈${defaultWind(s)}" style="width:80px"></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
 function eqRowCam(c) { return `<tr data-id="${c.id}"><td><input data-f="name" value="${esc(c.name)}"></td><td><input data-f="wpx" type="number" min="1" value="${c.wpx}"></td><td><input data-f="hpx" type="number" min="1" value="${c.hpx}"></td><td><input data-f="px" type="number" min="0.1" step="0.01" value="${c.px}"></td><td><select data-f="kind">${selOpts([['auto', 'Auto'], ['mono', 'Mono'], ['osc', 'Color (OSC)']], c.kind || 'auto')}</select></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
 const FILTER_TYPES = [['nb', 'Narrowband set: Hα + OIII + SII (mono)'], ['ha', 'Narrowband Hα (mono)'], ['oiii', 'Narrowband OIII (mono)'], ['sii', 'Narrowband SII (mono)'],
   ['bb', 'LRGB set (mono)'], ['dual', 'Dual-band Hα + OIII (colour)'], ['lp', 'Light-pollution / CLS (colour)'], ['uvir', 'UV/IR cut / clear (colour)']];
@@ -2081,14 +2132,14 @@ function readTbl(sel, numFields) {
   });
 }
 function saveEq() {
-  const scopes = readTbl('#scopeTbl', ['fl', 'ap']).filter((s) => s.name && s.fl > 0);
+  const scopes = readTbl('#scopeTbl', ['fl', 'ap', 'wind']).filter((s) => s.name && s.fl > 0).map((s) => ({ ...s, wind: Number.isFinite(s.wind) ? s.wind : null }));
   const cams = readTbl('#camTbl', ['wpx', 'hpx', 'px']).filter((c) => c.name && c.wpx > 0 && c.hpx > 0 && c.px > 0);
   if (!scopes.length || !cams.length) { alert('Keep at least one telescope and one camera.'); return; }
   state.scopes = scopes; state.cams = cams;
   state.filters = readTbl('#filtTbl', ['bw']).filter((f) => f.name).map((f) => ({ ...f, bw: Number.isFinite(f.bw) ? f.bw : null }));
   for (const r of state.rigs) if (r.filter && !filterById(r.filter)) r.filter = '';
   for (const r of state.rigs) { if (!scopeById(r.scope)) r.scope = scopes[0].id; if (!camById(r.cam)) r.cam = cams[0].id; }
-  saveStore(); $('#eqDlg').close(); renderRigs(); drawFrames();
+  saveStore(); $('#eqDlg').close(); renderRigs(); drawFrames(); rerenderWeather();
 }
 
 /* ---------- Wire up ---------- */
@@ -2130,7 +2181,7 @@ $('#boost').addEventListener('input', (e) => { state.boost = +e.target.value; ap
 $('#survey').addEventListener('change', (e) => setSurveyChoice(e.target.value));
 $('#seeing').value = state.seeing;
 $('#wxModel').value = state.wxModel;
-$('#wxModel').addEventListener('change', (e) => { state.wxModel = e.target.value; saveStore(); track('wx-model/' + state.wxModel); loadWeather(); });
+$('#wxModel').addEventListener('change', (e) => { state.wxModel = e.target.value; saveStore(); track('wx-model/' + state.wxModel); loadObs(true); loadWeather(); });
 $('#useFc').checked = state.useFcSeeing;
 $('#useFc').addEventListener('change', (e) => { state.useFcSeeing = e.target.checked; saveStore(); renderRigStats(); });
 $('#seeing').addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (v > 0) { state.seeing = v; saveStore(); renderRigStats(); } });

@@ -31,6 +31,9 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Any place: search by name or coordinates, use your device location, and save one place as the default
 - **Sky brightness and Bortle class** for the location, from the Light Pollution Atlas, with an alert above Bortle 5
 - **Moon**: phase, illumination, rise/set, next Full and New Moon, and a two-week strip — tap a night to plan it
+- **Wind for guiding**: give each telescope a wind limit under Equipment (an estimate from its size is used until you do). The forecast marks every hour ✓ / ~ / ✕ for each telescope in use, and the summary says how many dark hours each one can guide through
+- Gusts are the strongest of four forecasts (chosen model plus ECMWF, ICON and GFS); wind at 80–120 m warns when gusts may come down to a "calm" ground
+- **Airport wind check**: the measured wind at the nearest airport is compared with the forecast for the same hour; if the forecast is running low, tonight's gusts are scaled up to match
 - **Observed now**: the latest report from the nearest airport within 150 km (METAR, via the [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/)): measured visibility, cloud and its height, rain, thunderstorms, dust or fog, and wind, decoded into plain words
 - Hourly night forecast from [Open-Meteo](https://open-meteo.com/): cloud (low/mid/high), humidity, dew risk, wind gusts, rain chance and amount, storm risk (CAPE instability), and transparency from dust/haze (aerosol optical depth) plus visibility; a note after daytime rain explains its effect on transparency and seeing
 - Choose the forecast model (best match, ECMWF, ICON or GFS), and compare total cloud from all three side by side: a "models disagree" flag shows when the forecast is uncertain
