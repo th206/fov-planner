@@ -1170,17 +1170,20 @@ function computeTonight() {
   const moonUpHours = steps.filter((s) => s.moonUp).length * dt / 3600e3;
   const rigs = state.rigs.filter((r) => (o.rig === 'any' ? r.on : r.id === o.rig)).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g);
   const opt = { minFill: o.minFill, maxPanels: o.maxPanels };
-  const items = [];
+  const items = [], why = { small: 0, low: 0, hours: 0 };
   for (const c of CAT) {
     if (!o.types.includes(TYPE_GROUP[c.t])) continue;
-    if (90 - Math.abs(lat - c.dec) < o.minAlt) continue;          // never gets high enough
+    if (90 - Math.abs(lat - c.dec) < o.minAlt) { why.low++; continue; }          // never gets high enough
     let best = null;
     for (const { r, g } of rigs) {
       const ft = filterById(r.filter) && fType(filterById(r.filter));
-      if ((ft === 'nb' || ft === 'dual') && BROADBAND.has(c.t)) continue;   // ft is grouped: Hα/OIII/SII count as 'nb'     // galaxies/clusters need broadband filters
-      const f = fitFor(c, g, opt); if (f && (!best || fitRank(f) > fitRank(best.f))) best = { r, g, f, ft };
+      // galaxies/clusters want a broadband filter: a narrowband/dual-band rig can still shoot them after a filter swap, so keep them but prefer rigs that need no swap
+      const swap = (ft === 'nb' || ft === 'dual') && BROADBAND.has(c.t);   // ft is grouped: Hα/OIII/SII count as 'nb'
+      const f = fitFor(c, g, opt); if (!f) continue;
+      const rank = fitRank(f) - (swap ? 20 : 0);
+      if (!best || rank > best.rank) best = { r, g, f, ft: swap ? 'swap' : ft, swap, rank };
     }
-    if (!best) continue;
+    if (!best) { why.small++; continue; }
     // broadband-filtered rigs are hurt by moonlight on every target; narrowband rigs only matter for broadband targets
     const moonSensitive = o.avoidMoon && illum > 0.25 && (BROADBAND.has(c.t) || ['bb', 'uvir', 'lp'].includes(best.ft));
     let good = 0, peak = -90, peakMs = 0, moonSep = 180;
@@ -1189,28 +1192,28 @@ function computeTonight() {
       if (alt > peak) { peak = alt; peakMs = s.ms; }
       if (alt < o.minAlt) continue;
       const sep = angSep(c.ra, c.dec, s.mr, s.md); if (s.moonUp) moonSep = Math.min(moonSep, sep);
-      if (moonSensitive && s.moonUp && sep < 60 + 60 * illum) continue;
+      if (moonSensitive && s.moonUp && sep < 30 + 60 * illum) continue;   // ~60° at half moon, 90° at full
       good += dt;
     }
     const hours = good / 3600e3;
-    if (hours < 1) continue;
+    if (hours < 1) { why.hours++; continue; }
     items.push({ c, best, hours, peak, peakMs, moonSep, moonSensitive });
   }
   // "Best tonight": enough hours (5 h+ is plenty), a good fit, and well-known/bright targets first
   const notable = (c) => (c.name ? 1.5 : 0) + (/^M \d/.test(c.id) || /Caldwell/.test(c.alt) || /Caldwell/.test(c.id) ? 1 : 0)
     + (TYPE_GROUP[c.t] === 'gal' && c.mag != null ? Math.max(0, Math.min(1.5, (11 - c.mag) / 2)) : 0);
   const fitScore = (f) => (f.kind === 'fits' ? 1.2 - Math.abs(f.fill - 0.6) * 1.5 : 0.6 - 0.15 * f.panels);
-  for (const it of items) it.score = Math.min(it.hours, 5) * 0.9 + notable(it.c) + fitScore(it.best.f) + Math.max(0, it.peak - 40) / 50;
+  for (const it of items) it.score = Math.min(it.hours, 5) * 0.9 + notable(it.c) + fitScore(it.best.f) + Math.max(0, it.peak - 40) / 50 - (it.best.swap ? 0.8 : 0);
   const by = { best: (a, b) => b.score - a.score, hours: (a, b) => b.hours - a.hours || b.peak - a.peak, fit: (a, b) => fitRank(b.best.f) - fitRank(a.best.f) || b.hours - a.hours,
     bright: (a, b) => (a.c.mag ?? 99) - (b.c.mag ?? 99) || b.hours - a.hours, size: (a, b) => b.c.maj - a.c.maj };
   items.sort(by[o.sort] || by.best);
   const darkHours = steps.length * dt / 3600e3;
-  return { items, illum, moonUpHours, darkHours, tz };
+  return { items, illum, moonUpHours, darkHours, tz, why };
 }
 function renderTonight() {
   if (!$('#tnList')) return;
   tnCache = computeTonight();
-  const { items, illum, moonUpHours, darkHours, tz } = tnCache;
+  const { items, illum, moonUpHours, darkHours, tz, why } = tnCache;
   const o = state.tn;
   const hhmm = (ms) => { const d = new Date(ms + tz * 3600e3); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
   $('#tnMoonInfo').innerHTML = darkHours < 0.5 ? 'No astronomical darkness this night at this location.'
@@ -1219,7 +1222,11 @@ function renderTonight() {
       + (state.sky?.bortle > 5 ? ` · <b>Bortle ${state.sky.bortle} sky</b>: emission nebulae are your best bet` : '')
       + (extState === 'loading' ? ' · loading LDN/LBN/SNR catalogs…' : extState === 'failed' ? ' · LDN/LBN/SNR catalogs could not be loaded (offline?)' : '');
   if (!items.length) {
-    $('#tnList').innerHTML = `<div class="note" style="padding:6px 0">Nothing suits ${o.rig === 'any' ? 'your rigs' : 'this rig'} with these filters. Try lowering the minimum altitude or fill, allowing more mosaic panels, or adding a type.</div>`;
+    const reasons = [why.small ? `${why.small} too small (under ${o.minFill}% of the frame) or too big (over ${o.maxPanels} panels)` : '',
+      why.low ? `${why.low} never rise above ${o.minAlt}°` : '',
+      why.hours ? `${why.hours} have under 1 h of usable dark time${o.avoidMoon && illum > 0.25 ? ' away from the Moon' : ''}` : ''].filter(Boolean);
+    $('#tnList').innerHTML = `<div class="note" style="padding:6px 0">Nothing suits ${o.rig === 'any' ? 'your rigs' : 'this rig'} with these filters${reasons.length ? `: ${reasons.join('; ')}` : ''}.
+      Try lowering the minimum fill or altitude, allowing more mosaic panels${o.avoidMoon && illum > 0.25 ? ', unticking Avoid Moon' : ''}, or adding a type.</div>`;
     $('#tnPick').innerHTML = '<option>No matching targets</option>'; $('#tnCount').textContent = '';
     const gl = Object.fromEntries(GROUPS);
     $('#tnFilterSum').textContent = `Filters: ${o.types.map((g) => gl[g]).join(', ') || 'no types'} · ≥${o.minAlt}° · fill ≥${o.minFill}% · ≤${o.maxPanels} panels`;
@@ -1232,7 +1239,7 @@ function renderTonight() {
     const nm = c.name || c.alt.split(' · ')[0] || '';
     const short = (n) => n.split(/\s+/).find((w) => /\d/.test(w)) || n.split(/\s+/)[0];
     const rig = o.rig === 'any' ? ` · ${short(best.g.s.name)}` : '';
-    return `<option value="${k}" ${k === sel ? 'selected' : ''}>${k + 1}. ${esc(c.id)}${nm ? ' ' + esc(nm) : ''} — ${fitText(best.f)} · ${hours.toFixed(1)} h${esc(rig)}</option>`;
+    return `<option value="${k}" ${k === sel ? 'selected' : ''}>${k + 1}. ${esc(c.id)}${nm ? ' ' + esc(nm) : ''} — ${fitText(best.f)} · ${hours.toFixed(1)} h${esc(rig)}${best.swap ? ' · swap filter' : ''}</option>`;
   }).join('');
   const it = items[sel], { c, best, hours, peak, peakMs } = it, f = best.f;
   const fitTag = f.kind === 'fits' ? `<span class="tag good" title="The whole target fits; it spans this share of the frame">fits · ${Math.round(f.fill * 100)}% of frame</span>`
@@ -1244,10 +1251,17 @@ function renderTonight() {
       <div class="tn-l1"><b>${esc(c.id)}</b> <span class="tn-name">${esc(c.name || c.alt.split(' · ')[0] || '')}</span> ${fitTag}</div>
       <div class="tn-l2">${TYPE_NAMES[c.t] || c.t} · ${size}${c.mag != null ? ` · mag ${c.mag}` : ''} · <b>${hours.toFixed(1)} h</b> · max ${Math.round(peak)}° at ${hhmm(peakMs)}${it.moonSensitive && it.moonSep < 180 ? ` · Moon ${Math.round(it.moonSep)}°` : ''}</div>
       <div class="tn-l2">${rigLine}</div>
+      ${best.swap ? `<div class="tn-l2"><span class="tag warn">swap filter</span> ${esc(filterById(best.r.filter)?.name || 'your filter')} blocks most of a ${TYPE_GROUP[c.t] === 'cl' ? 'cluster' : 'galaxy'}'s light — use ${swapAdvice(best.g)}</div>` : ''}
     </div>`;
   $('#tnCount').textContent = `${items.length} target${items.length === 1 ? '' : 's'}`;
   const gl = Object.fromEntries(GROUPS);
   $('#tnFilterSum').textContent = `Filters: ${o.types.map((g) => gl[g]).join(', ') || 'no types'} · ≥${o.minAlt}° · fill ≥${o.minFill}% · ≤${o.maxPanels} panel${o.maxPanels == 1 ? '' : 's'}${o.avoidMoon ? ' · avoid Moon' : ''}`;
+}
+function swapAdvice(g) {          // the broadband filter to use instead, from the user's own filters when possible
+  const kind = camKind(g.c), want = kind === 'mono' ? ['bb'] : ['lp', 'uvir'];
+  const own = (state.filters || []).filter((f) => want.includes(f.type));
+  if (own.length) return own.map((f) => '<b>' + esc(f.name) + '</b>').join(' or ');
+  return kind === 'mono' ? 'an LRGB set' : 'a UV/IR-cut or light-pollution filter';
 }
 function pickTonight(k) {
   const it = tnCache?.items[k]; if (!it) return;

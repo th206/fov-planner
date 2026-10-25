@@ -17,7 +17,8 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - ~2,200 objects ranked for the chosen night and place: galaxies, nebulae, Lynds bright (LBN) and dark (LDN) nebulae, optically visible supernova remnants, planetary nebulae and clusters
 - **Targets too small for a rig are hidden**; big ones show the mosaic they need (up to the panel limit you set)
 - Usable dark hours above your minimum altitude, peak altitude, and Moon distance; galaxies, dark nebulae and clusters can count only moon-free hours
-- Aware of each rig's filter: narrowband/dual-band rigs get emission targets, broadband rigs count moonlight on everything
+- Aware of each rig's filter: galaxies and clusters still show for narrowband/dual-band rigs, marked **swap filter** with the broadband filter to use from your own list; broadband rigs count moonlight on everything
+- When nothing matches, it says why (too small, too low, or too little moon-free time)
 - Pick a target from the dropdown to load it; for mosaics the rig's grid and rotation are set for you
 
 ## Filters
