@@ -1590,7 +1590,8 @@ async function fetchJson(url, ms = 15000) {
 function nightWindow() {
   const { tz } = state.site;
   const [y, mo, d] = ($('#night').value || new Date().toISOString().slice(0, 10)).split('-').map(Number);
-  const t0 = Date.UTC(y, mo - 1, d, 16) - tz * 3600e3;
+  // start on a whole UTC hour: forecasts are hourly in UTC, and zones like India (UTC+5:30) or Nepal (+5:45) would otherwise miss every hour
+  const t0 = Math.floor((Date.UTC(y, mo - 1, d, 16) - tz * 3600e3) / 3600e3) * 3600e3;
   return { t0, t1: t0 + 16 * 3600e3 };
 }
 const CMP_MODELS = [{ id: 'ecmwf_ifs025', name: 'ECMWF' }, { id: 'icon_seamless', name: 'ICON' }, { id: 'gfs_seamless', name: 'GFS' }];
@@ -1848,7 +1849,8 @@ function renderWeather(w, a, t0, t1, c) {
       html += v == null || !isFinite(v) ? '<div>·</div>' : `<div class="${cls(v)}"${title}>${fmt(v)}</div>`;
     }
   }
-  html += `</div><div class="wxnote">Bold hours are astronomical darkness. <b>Seeing</b> is a model estimate (FWHM at 500 nm, zenith) from temperature and wind at 16 heights up to ~16 km; hover a cell for the main turbulent layer.
+  const offMin = Math.round(((tz % 1) + 1) % 1 * 60);
+  html += `</div><div class="wxnote">Bold hours are astronomical darkness.${offMin ? ` Columns are hourly forecasts at <b>:${String(offMin).padStart(2, '0')}</b> past each local hour shown (this time zone is offset from UTC by a fraction of an hour).` : ''} <b>Seeing</b> is a model estimate (FWHM at 500 nm, zenith) from temperature and wind at 16 heights up to ~16 km; hover a cell for the main turbulent layer.
     <b>Free air</b> leaves out the lowest 1 km, which depends heavily on your own site. <b>On target</b> adds the extra air at the target's altitude.
     <b>Jet</b> = strongest wind at 300–200 hPa (9–12 km). <b>Cool</b> = how fast the air is cooling; above 2°/h expect tube currents, so let the scope cool.
     Dew gap under 2° means dew risk. AOD above 0.6 means a milky, dusty sky. <b>Visibility</b> under 10 km means haze, dust or moisture near the ground; both feed the transparency rating.
