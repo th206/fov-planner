@@ -64,7 +64,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 
 - Object catalog: [OpenNGC](https://github.com/mattiaverga/OpenNGC) (CC-BY-SA 4.0) and the Sharpless (1959) catalog; Lynds dark (LDN) and bright (LBN) nebulae and Green's Galactic SNR catalogue (2025, optically visible remnants only) loaded live from [VizieR](https://vizier.cds.unistra.fr/) and cached for 90 days
 - Object details: [SIMBAD](https://simbad.cds.unistra.fr/) (CDS)
-- Sky viewer: [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) (CDS)
+- Sky viewer: [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) (CDS); DSS2 and 2MASS images fall back to the [ESA Sky](https://sky.esa.int/) mirror, and name lookups to the SIMBAD mirror at Harvard (CfA), when CDS is down
 - Narrowband imagery: Northern Sky Narrowband Survey by Stefan Ziegenbalg ([CC BY-NC-SA 4.0](http://www.simg.de/nebulae3/dr0_2/)); IPHAS DR2 Hα
 - Light pollution: [Light Pollution Atlas](https://djlorenz.github.io/astronomy/lp/) by David Lorenz (Bortle class is an approximation from sky brightness)
 - Weather and air quality: [Open-Meteo](https://open-meteo.com/); airport observations: [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/) (Iowa State University); astronomical forecast chart: [7Timer!](https://www.7timer.info/)
