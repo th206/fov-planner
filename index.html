@@ -974,17 +974,31 @@ function parseCoords(q) {
   }
   return null;
 }
-const TAP = 'https://simbad.cds.unistra.fr/simbad/sim-tap/sync?REQUEST=doQuery&LANG=ADQL&FORMAT=json&QUERY=';
-async function tap(adql, ms = 15000) {
+// SIMBAD in Strasbourg, with its official mirror at Harvard (CfA) as a fallback; the last host that worked is tried first
+const TAP_HOSTS = ['https://simbad.cds.unistra.fr', 'https://simbad.cfa.harvard.edu'];
+let tapFirst = (() => { try { const v = JSON.parse(localStorage.getItem('mrp.tap')); return v && Date.now() - v.t < 864e5 ? v.i : 0; } catch { return 0; } })();
+async function tapOnce(host, adql, ms) {
   const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), ms);
   try {
-    const r = await fetch(TAP + encodeURIComponent(adql), { signal: ctl.signal });
+    const r = await fetch(`${host}/simbad/sim-tap/sync?REQUEST=doQuery&LANG=ADQL&FORMAT=json&QUERY=` + encodeURIComponent(adql), { signal: ctl.signal });
     if (!r.ok) throw new Error('SIMBAD error ' + r.status);
     const j = await r.json();
     return (j.data || []).map((row) => Object.fromEntries(j.metadata.map((m, k) => [m.name, row[k]])));
-  } catch (e) {
-    throw new Error(e.name === 'AbortError' ? 'SIMBAD did not respond — try again.' : 'Could not reach SIMBAD — check your connection.');
   } finally { clearTimeout(timer); }
+}
+async function tap(adql, ms = 15000) {
+  const order = [tapFirst, 1 - tapFirst];
+  let last;
+  for (let k = 0; k < order.length; k++) {
+    try {
+      const rows = await tapOnce(TAP_HOSTS[order[k]], adql, k === 0 ? Math.min(ms, 7000) : ms);
+      if (order[k] !== tapFirst) { tapFirst = order[k]; try { localStorage.setItem('mrp.tap', JSON.stringify({ i: tapFirst, t: Date.now() })); } catch {} }
+      return rows;
+    } catch (e) { last = e; }
+  }
+  const err = new Error(last?.name === 'AbortError' ? 'SIMBAD did not respond — try again.' : 'Could not reach SIMBAD — check your connection.');
+  err.offline = true;
+  throw err;
 }
 const sq = (s) => s.replace(/'/g, "''");
 async function resolveName(q) {
@@ -1028,7 +1042,15 @@ async function search(q) {
     }
     setTarget(t, size, q.trim());
   } catch (e) {
-    st.className = 'err'; st.textContent = e.message || 'Lookup failed — check the name or your connection.';
+    // SIMBAD unreachable: fall back to the built-in catalog (Messier, NGC, IC, Caldwell, Sharpless, LDN/LBN…)
+    const co = e.offline && (CAT_INDEX.get(catKey(q)) || CAT_INDEX.get(catKey(q.replace(/^(m|ngc|ic|b)(\d)/i, '$1 $2'))));
+    if (co) {
+      showCatalogTarget(co, false);
+      st.className = ''; st.textContent = 'SIMBAD is not responding, so this came from the built-in catalog (no magnitude details).';
+      return;
+    }
+    st.className = 'err'; st.textContent = (e.message || 'Lookup failed — check the name or your connection.')
+      + (e.offline ? ' Catalog names like M 31, NGC 925 or Sh2-155 still work while SIMBAD is down.' : '');
   }
 }
 
@@ -1275,11 +1297,11 @@ function pickTonight(k) {
   }
   showCatalogTarget(c);
 }
-function showCatalogTarget(c) {
+function showCatalogTarget(c, scroll = true) {
   const t = { name: c.id, mainId: c.id, ra: c.ra, dec: c.dec, typeDesc: TYPE_NAMES[c.t], mags: c.mag != null ? { V: c.mag } : {},
     aliases: [c.name, ...c.alt.split(' · ')].filter(Boolean) };
   setTarget(t, { maj: c.maj, min: c.min, pa: c.pa, src: 'catalog' }, c.id);
-  document.querySelector('main').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (scroll) document.querySelector('main').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 $('#tnRig').addEventListener('change', (e) => { state.tn.rig = e.target.value; saveStore(); tnSel = 0; renderTonight(); });
 $('#tnTypes').addEventListener('click', (e) => {
