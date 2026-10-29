@@ -55,6 +55,17 @@
   .rig { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 8px; padding: 9px; background: var(--panel-2); display: flex; flex-direction: column; gap: 7px; }
   .rig + .rig { margin-top: 8px; }
   .rig.off { opacity: .55; }
+  #verdict .vhead { margin-bottom: 6px; color: var(--text); }
+  #verdict .rigdot { display: inline-block; margin-right: 6px; vertical-align: 1px; }
+  #verdict .vline { padding: 5px 0; border-top: 1px solid var(--line); line-height: 1.6; color: var(--text); font-size: 13px; }
+  .righead { display: flex; gap: 8px; align-items: center; }
+  .rigname { flex: 1; display: flex; justify-content: space-between; align-items: center; gap: 6px; background: none; border: none; padding: 2px 0; color: var(--text); font: inherit; font-weight: 600; font-size: 13.5px; text-align: left; cursor: pointer; }
+  .rigname .chev { color: var(--muted); transition: transform .15s; font-size: 12px; }
+  .rig.open .rigname .chev { transform: rotate(180deg); }
+  .rigsum { font-size: 12px; color: var(--muted); line-height: 1.7; font-variant-numeric: tabular-nums; }
+  .rigsum b { color: var(--text); font-weight: 600; }
+  .rigbody { display: none; flex-direction: column; gap: 7px; border-top: 1px solid var(--line); padding-top: 8px; }
+  .rig.open .rigbody { display: flex; }
   .rig .top { display: flex; gap: 6px; align-items: center; }
   .rig .top select { flex: 1; }
   .rig input[type=color] { width: 28px; height: 28px; padding: 0; border: none; background: none; }
@@ -152,9 +163,33 @@
   dialog h3 { margin: 12px 0 6px; font-size: 14px; }
   .dlgbtns { display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; }
   .note { font-size: 12px; color: var(--muted); }
+  /* Tabs: one job per screen */
+  #tabs { display: flex; gap: 4px; position: sticky; top: -14px; z-index: 6; background: var(--bg); padding: 6px 0; margin: -4px 0 -2px; }
+  #tabs button { flex: 1; display: flex; gap: 6px; align-items: center; justify-content: center; padding: 7px 4px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+  #tabs button[aria-selected="true"] { color: var(--text); border-color: var(--accent); background: var(--panel-2); font-weight: 600; }
+  #tabs .ti { font-size: 14px; }
+  #app[data-tab="frame"] section[data-tab]:not([data-tab="frame"]),
+  #app[data-tab="tonight"] section[data-tab]:not([data-tab="tonight"]),
+  #app[data-tab="sky"] section[data-tab]:not([data-tab="sky"]),
+  #app[data-tab="gear"] section[data-tab]:not([data-tab="gear"]) { display: none; }
+  @media (min-width: 861px) { #app[data-tab="tonight"], #app[data-tab="sky"] { grid-template-columns: 560px 1fr; } }
+  details.info > summary { font-size: 12px; color: var(--muted); cursor: pointer; margin-top: 8px; list-style: none; }
+  details.info > summary::-webkit-details-marker { display: none; }
+  details.info > summary:hover { color: var(--text); }
   @media (max-width: 860px) {
-    #app { grid-template-columns: 1fr; grid-template-rows: 58vh auto; height: auto; }
-    main { order: -1; height: 58vh; }
+    #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: 44vh auto; height: auto; }
+    #app:not([data-tab="frame"]) { grid-template-rows: auto; }
+    #app:not([data-tab="frame"]) main { display: none; }
+    #app[data-tab="frame"] main { position: sticky; top: 0; z-index: 5; }
+    #tabs { position: fixed; top: auto; bottom: 0; left: 0; right: 0; margin: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); z-index: 60; }
+    #tabs button { flex-direction: column; gap: 1px; font-size: 11px; padding: 5px 2px; border: none; background: none; }
+    #tabs button[aria-selected="true"] { background: var(--panel-2); color: var(--accent); }
+    #tabs .ti { font-size: 18px; }
+    #app:not([data-tab="frame"]) aside .sub { display: none; }
+    aside { padding-bottom: 84px !important; }
+    aside, aside > * { min-width: 0; }
+    main { order: -1; height: 44vh; }
     aside { border-right: none; overflow: visible; padding: 12px 16px; }
   }
 </style>
@@ -175,8 +210,14 @@
       <h1>Multi-Rig FOV Planner</h1>
       <div class="sub">Compare all your telescope + camera combos on one target. Drag the sky to compose.</div>
     </div>
+    <nav id="tabs" role="tablist" aria-label="Sections">
+      <button type="button" role="tab" data-go="frame"><span class="ti">⌖</span><span>Frame</span></button>
+      <button type="button" role="tab" data-go="tonight"><span class="ti">★</span><span>Tonight</span></button>
+      <button type="button" role="tab" data-go="sky"><span class="ti">☁</span><span>Sky</span></button>
+      <button type="button" role="tab" data-go="gear"><span class="ti">⚙</span><span>Gear</span></button>
+    </nav>
 
-    <section class="card">
+    <section data-tab="frame" class="card">
       <form id="searchForm" autocomplete="off">
         <input id="q" placeholder="M31, NGC 7000, Pelican Nebula, 20 58 47 +44 20" aria-label="Target">
         <button class="primary" type="submit">Go</button>
@@ -184,7 +225,7 @@
       <div id="status"></div>
     </section>
 
-    <section class="card" id="targetCard">
+    <section data-tab="frame" class="card" id="targetCard">
       <details id="tgtDetails">
       <summary class="tgtsum"><span class="tgtlabel">Target</span> <span id="tgtSum" class="note">search for an object</span></summary>
       <div id="targetBody" class="note" style="margin-top:8px">Search for an object to see its details.</div>
@@ -198,7 +239,7 @@
       </details>
     </section>
 
-    <section class="card">
+    <section data-tab="frame" class="card">
       <h2>Rigs
         <span class="row">
           <button class="icon" id="addRig" title="Add rig">+ Rig</button>
@@ -213,7 +254,23 @@
       </div>
     </section>
 
-    <section class="card" id="tonightCard">
+    <section data-tab="tonight" class="card" id="verdictCard">
+      <h2>Tonight at a glance <span class="note" id="verdictWhen"></span></h2>
+      <div id="verdict" class="note">Waiting for the forecast…</div>
+    </section>
+
+    <section data-tab="tonight" class="card" id="cometCard" hidden>
+      <h2>Comets <span class="note" id="cometCount"></span></h2>
+      <select id="cometPick" class="tnpick" aria-label="Choose a comet"></select>
+      <div id="cometInfo"></div>
+      <details class="info"><summary>ⓘ About comets</summary>
+        <div class="wxnote">Comets brighter than about magnitude 12 that are up during darkness from your site, from the Minor Planet Center's current orbits (refreshed daily).
+        Brightness is a prediction and comets often run 1–2 magnitudes brighter or fainter. Comets move against the stars, so the frame is placed for the time shown;
+        the max sub-exposure keeps the comet's own motion under one pixel on that rig. Tails can stretch far beyond the frame.</div>
+      </details>
+    </section>
+
+    <section data-tab="tonight" class="card" id="tonightCard">
       <h2>Tonight's targets <span class="note" id="tnCount"></span></h2>
       <div class="row"><label style="flex:1">For <select id="tnRig" style="flex:1"></select></label></div>
       <select id="tnPick" class="tnpick" aria-label="Choose a target"></select>
@@ -232,18 +289,18 @@
           <label>Sort <select id="tnSort"><option value="best">Best tonight</option><option value="hours">Usable hours</option><option value="fit">Best fit</option><option value="bright">Brightest</option><option value="size">Largest</option></select></label>
         </div>
       </details>
-      <div class="wxnote">For the night and place set below. Hours count astronomical darkness with the target above your minimum altitude.
-        Pick a target from the list to load it; for mosaics the rig's grid and rotation are set for you. Catalog: OpenNGC (CC-BY-SA 4.0) and Sharpless (1959).</div>
+      <details class="info"><summary>ⓘ How this list works</summary><div class="wxnote">For the night (date under Visibility) and the place set in Sky. Hours count astronomical darkness with the target above your minimum altitude.
+        Pick a target from the list to load it; for mosaics the rig's grid and rotation are set for you. Catalog: OpenNGC (CC-BY-SA 4.0) and Sharpless (1959).</div></details>
     </section>
 
-    <section class="card">
+    <section data-tab="tonight" class="card">
       <h2>Visibility <input id="night" type="date" aria-label="Night of"></h2>
       <canvas id="altChart" aria-label="Altitude of target through the night"></canvas>
       <div class="altsum" id="altSum"></div>
     </section>
 
-    <section class="card">
-      <h2>Conditions <button class="icon ghost" id="wxReload" title="Refresh forecast">↻</button></h2>
+    <section data-tab="sky" class="card">
+      <h2><span>Conditions <span class="note" id="skyWhen" style="text-transform:none;letter-spacing:0"></span></span> <button class="icon ghost" id="wxReload" title="Refresh forecast">↻</button></h2>
       <div class="locbar">
         <div class="locname"><span id="locName">—</span> <span id="locTag"></span></div>
         <div id="skyBox" class="skybox"></div>
@@ -279,17 +336,17 @@
       <div class="note" id="wxLinks" style="margin-top:8px"></div>
     </section>
 
-    <section class="card">
+    <section data-tab="gear" class="card">
       <h2>My images <span class="row"><button class="icon" id="imgAddBtn" title="Add plate-solved images">+ Add</button></span></h2>
       <input type="file" id="imgFile" multiple hidden accept=".jpg,.jpeg,.png,.fits,.fit,.fts,.wcs,.ini,.txt">
       <div id="imgList"></div>
       <div id="imgMsg" class="note"></div>
-      <div class="wxnote">Overlay your own plate-solved images. Select the image <b>and</b> its solve file together:
+      <details class="info"><summary>ⓘ Which files work</summary><div class="wxnote">Overlay your own plate-solved images. Select the image <b>and</b> its solve file together:
         astrometry.net <code>wcs.fits</code>, ASTAP <code>.wcs</code>, or a FITS image with WCS in its header (PixInsight, Siril).
-        Images stay in this browser and show up whenever their part of the sky is in view.</div>
+        Images stay in this browser and show up whenever their part of the sky is in view.</div></details>
     </section>
 
-    <section class="card">
+    <section data-tab="gear" class="card">
       <h2>Settings</h2>
       <div class="row">
         <label>Survey
@@ -1053,6 +1110,8 @@ const normId = (s) => (s || '').replace(/^NAME /, '').replace(/\s+/g, ' ').trim(
 async function search(q) {
   if (!q.trim()) return;
   const st = $('#status'); st.className = ''; st.textContent = `Looking up ${q}…`;
+  const cm = findComet(q);
+  if (cm) { showComet(cm); return; }
   try {
     const t = await resolveName(q);
     st.textContent = '';
@@ -1256,6 +1315,7 @@ function computeTonight() {
   return { items, illum, moonUpHours, darkHours, tz, why };
 }
 function renderTonight() {
+  renderComets();
   if (!$('#tnList')) return;
   tnCache = computeTonight();
   const { items, illum, moonUpHours, darkHours, tz, why } = tnCache;
@@ -1310,6 +1370,7 @@ function swapAdvice(g) {          // the broadband filter to use instead, from t
 }
 function pickTonight(k) {
   const it = tnCache?.items[k]; if (!it) return;
+  setTab('frame');
   const { c, best } = it, f = best.f;
   // frame it: in single-rig mode, set that rig's mosaic and align the long side with the target
   if (state.tn.rig !== 'any' || f.kind === 'mosaic') {
@@ -1468,9 +1529,14 @@ function opts(list, sel) { return list.map((x) => `<option value="${x.id}" ${x.i
 function renderRigs() {
   if ($('#tnRig')) { tonightSetup(); scheduleTonight(); }
   $('#rigs').innerHTML = state.rigs.map((r) => `
-    <div class="rig ${r.on ? '' : 'off'}" data-id="${r.id}" style="--c:${r.color}">
-      <div class="top">
+    <div class="rig ${r.on ? '' : 'off'} ${r.open ? 'open' : ''}" data-id="${r.id}" style="--c:${r.color}">
+      <div class="righead">
         <input type="checkbox" data-k="on" ${r.on ? 'checked' : ''} title="Show / hide">
+        <button type="button" class="rigname" data-act="toggle" aria-expanded="${r.open ? 'true' : 'false'}" title="Show / hide settings"><span data-name></span><span class="chev">▾</span></button>
+      </div>
+      <div class="rigsum" data-sum></div>
+      <div class="rigbody">
+      <div class="top">
         <input type="color" data-k="color" value="${r.color}" title="Frame color">
         <select data-k="scope" aria-label="Telescope">${opts(state.scopes, r.scope)}</select>
         <button class="icon ghost" data-act="del" title="Remove rig">✕</button>
@@ -1492,19 +1558,22 @@ function renderRigs() {
         <label>overlap % <input class="num" style="width:50px" type="number" min="0" max="60" data-k="overlap" value="${r.overlap}"></label>
       </div>
       <div class="stats" data-stats></div>
+      </div>
     </div>`).join('');
   renderRigStats();
 }
 function renderRigStats() {
   for (const el of document.querySelectorAll('.rig')) {
     const r = state.rigs.find((x) => x.id === el.dataset.id); const g = r && rigGeom(r);
-    const box = el.querySelector('[data-stats]');
-    if (!g) { box.textContent = 'Missing telescope or camera'; continue; }
+    const box = el.querySelector('[data-stats]'), sum = el.querySelector('[data-sum]');
+    const sc0 = r && scopeById(r.scope), cm0 = r && camById(r.cam);
+    el.querySelector('[data-name]').textContent = `${sc0?.name || '?'} + ${cm0?.name || '?'}${r && r.factor !== 1 ? ` ×${r.factor}` : ''}`;
+    if (!g) { box.textContent = 'Missing telescope or camera'; sum.textContent = ''; continue; }
     const useFc = state.useFcSeeing && state.fcSeeing;
     const see = useFc ? state.fcSeeing : state.seeing;
     const samp = g.scale < see / 3.5 ? ['warn', 'oversampled'] : g.scale > see / 1.5 ? ['warn', 'undersampled'] : ['good', 'well sampled'];
     samp[1] += ` for ${see.toFixed(1)}″${useFc ? ' forecast' : ''}`;
-    let fit = '';
+    let fit = '', fitShort = '';
     const z = state.size;
     if (z?.maj) {
       const wA = g.mw * 60, hA = g.mh * 60;
@@ -1516,8 +1585,9 @@ function renderRigStats() {
         const nr = Math.max(1, Math.ceil(((z.min || z.maj) * 1.1 / (g.h * 60) - 1) / step + 1 - 0.05));
         const cover = Math.min(1, longSide / z.maj) * Math.min(1, shortSide / (z.min || z.maj)) * 100;
         fit = `<span class="tag bad">too large</span> ${r.cols * r.rows > 1 ? 'this mosaic' : 'one frame'} covers ≈${cover.toFixed(0)}% of the target · try ~${nc}×${nr} mosaic (rotate to align)`;
-      } else if (pct < 15) fit = `<span class="tag warn">small</span> whole target fits, but only ≈${pct.toFixed(0)}% of the frame width`;
-      else fit = `<span class="tag good">fits</span> whole target fits, using ≈${pct.toFixed(0)}% of the frame width`;
+        fitShort = `<span class="tag bad" title="${r.cols * r.rows > 1 ? 'This mosaic' : 'One frame'} covers ≈${cover.toFixed(0)}% of the target">too large · try ${nc}×${nr}</span>`;
+      } else if (pct < 15) { fit = `<span class="tag warn">small</span> whole target fits, but only ≈${pct.toFixed(0)}% of the frame width`; fitShort = `<span class="tag warn" title="Whole target fits, but small in the frame">small · ${pct.toFixed(0)}%</span>`; }
+      else { fit = `<span class="tag good">fits</span> whole target fits, using ≈${pct.toFixed(0)}% of the frame width`; fitShort = `<span class="tag good" title="Whole target fits; share of the frame width">fits · ${pct.toFixed(0)}%</span>`; }
     }
     let vig = '';
     const flt = filterById(r.filter);
@@ -1537,6 +1607,10 @@ function renderRigStats() {
         : `<span class="tag warn">filter</span> ${rf.generic} would suit this target <span class="note">· ${rf.why}${(state.filters || []).length ? '' : '; add your filters under Equipment'}</span>`;
       if (rf.skipped && rf.pick.length === 0 && (state.filters || []).length) rec += ` <span class="note">(${rf.skipped} of your filters would vignette on this sensor)</span>`;
     }
+    const vigShort = vig ? `<span class="tag ${vig.includes('tag bad') ? 'bad' : 'warn'}">vignetting</span>` : '';
+    const recShort = rf && rf.pick.length ? (rf.pick.some((f) => f.id === r.filter) ? '<span class="tag good" title="Your filter suits this target">filter ✓</span>'
+      : `<span class="tag warn" title="Suggested filter">→ ${rf.pick.label ? esc(rf.pick.label) : esc(rf.pick[0].name)}</span>`) : rf ? '<span class="tag warn">filter?</span>' : '';
+    sum.innerHTML = `<b>${fmtAngle(g.w)} × ${fmtAngle(g.h)}</b> · ${g.scale.toFixed(2)}″/px <span class="tag ${samp[0]}" title="${samp[1]}">${samp[1].split(' for ')[0]}</span> ${fitShort} ${vigShort} ${recShort}`;
     box.innerHTML = `FOV <b>${fmtAngle(g.w)} × ${fmtAngle(g.h)}</b>${r.cols * r.rows > 1 ? ` · mosaic <b>${fmtAngle(g.mw)} × ${fmtAngle(g.mh)}</b>` : ''}<br>
       ${g.fl.toFixed(0)} mm${g.fr ? ` · f/${g.fr.toFixed(1)}` : ''} · <b>${g.scale.toFixed(2)}″/px</b> <span class="tag ${samp[0]}">${samp[1]}</span>${fit ? '<br>' + fit : ''}${vig ? '<br>' + vig : ''}${rec ? '<br>' + rec : ''}`;
   }
@@ -1556,7 +1630,7 @@ function onRigInput(e) {
     if (k === 'rot') el.querySelector('[data-rotv]').textContent = `${v}°`;
   }
   if (k === 'on' || k === 'scope' || k === 'cam') tonightSetup();   // keep rig names in Tonight's dropdown current
-  if (k === 'on' || k === 'scope') { clearTimeout(onRigInput.wt); onRigInput.wt = setTimeout(rerenderWeather, 300); }
+  if (k === 'on' || k === 'scope' || k === 'cam' || k === 'factor') { clearTimeout(onRigInput.wt); onRigInput.wt = setTimeout(rerenderWeather, 300); }
   saveStore(); renderRigStats(); drawFrames(); scheduleTonight();
 }
 
@@ -1614,7 +1688,8 @@ const WX_HOURLY = ['cloud_cover', 'cloud_cover_low', 'cloud_cover_mid', 'cloud_c
   'visibility', 'precipitation', 'precipitation_probability', 'cape', 'wind_speed_80m', 'wind_speed_120m',
   ...[1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200, 150, 100].flatMap((p) =>
     [`temperature_${p}hPa`, `wind_speed_${p}hPa`, `wind_direction_${p}hPa`, `geopotential_height_${p}hPa`])].join(',');
-let wxSeq = 0, wxTimer, wxLast = null;
+let wxSeq = 0, wxTimer, wxLast = null, wxInfoOpen = false;
+document.addEventListener('toggle', (e) => { if (e.target.id === 'wxInfo') wxInfoOpen = e.target.open; }, true);
 const rerenderWeather = () => { if (wxLast) renderWeather(...wxLast); };
 async function fetchJson(url, ms = 15000) {
   const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), ms);
@@ -1756,7 +1831,7 @@ async function loadWeather() {
   renderWxLinks();
   loadObs();
   if ($('#t7').open) load7Timer();
-  $('#wxSum').innerHTML = '<span class="note">Loading forecast…</span>'; $('#wx').innerHTML = '';
+  $('#wxSum').innerHTML = '<span class="note">Loading forecast…</span>'; $('#wx').innerHTML = ''; $('#verdict').innerHTML = 'Loading the forecast…';
   try {
     const [w, a, c] = await Promise.all([
       fetchJson(`https://api.open-meteo.com/v1/forecast?${q}&hourly=${WX_HOURLY}&models=${state.wxModel}`),
@@ -1765,7 +1840,7 @@ async function loadWeather() {
     ]);
     if (seq === wxSeq) { wxLast = [w, a, t0, t1, c]; renderWeather(w, a, t0, t1, c); }
   } catch (e) {
-    if (seq === wxSeq) { $('#wxSum').innerHTML = `<span class="note">${esc(e.message)}</span>`; $('#wx').innerHTML = ''; }
+    if (seq === wxSeq) { $('#wxSum').innerHTML = `<span class="note">${esc(e.message)}</span>`; $('#wx').innerHTML = ''; $('#verdict').innerHTML = `<span class="note">${esc(e.message)}</span>`; }
   }
 }
 function hourlyLookup(j) {
@@ -1815,6 +1890,67 @@ function seeingAt(W, ms, elev) {
   const freeSum = sum - parts.ground;
   const main = Object.entries(parts).sort((x, y) => y[1] - x[1])[0][0];
   return { total: Math.min(6, fwhm(sum)), free: freeSum > 0 ? Math.min(6, fwhm(freeSum)) : 0, main, share: parts[main] / sum };
+}
+/* ---------- Tonight at a glance: one line per rig, best clear window ---------- */
+function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
+  const box = $('#verdict'); if (!box) return;
+  const hhmm = (ms) => { const d = new Date(ms + tz * 3600e3); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
+  const dark = hours.filter((h) => h.dark);
+  const nightDate = $('#night').value;
+  $('#verdictWhen').textContent = nightDate ? '· ' + new Date(nightDate + 'T12:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+  $('#skyWhen').textContent = nightDate ? `night of ${new Date(nightDate + 'T12:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })} (change under Tonight → Visibility)` : '';
+  if (!dark.length) { box.innerHTML = 'No astronomical darkness this night at this place.'; return; }
+  if (dark.every((h) => val('cloud_cover', h.ms) == null)) { box.innerHTML = '<span class="note">No forecast for this date yet — forecasts reach about 2 weeks ahead.</span>'; return; }
+  const minAlt = state.tn.minAlt || 30, tName = t ? esc(normId(t.mainId || t.name)) : '';
+  const rigs = state.rigs.filter((r) => r.on).map((r) => ({ r, g: rigGeom(r), sc: scopeById(r.scope) })).filter((x) => x.g && x.sc);
+  const REASON = { cloud: 'cloud', rain: 'rain', wind: 'too windy', seeing: 'poor seeing', low: `${tName || 'target'} below ${minAlt}°` };
+  const lines = [];
+  let bestAll = 0;
+  for (const { r, g, sc } of rigs) {
+    const lim = windLimit(sc), why = {};
+    const grade = dark.map((h) => {
+      const cl = val('cloud_cover', h.ms), rp = val('precipitation_probability', h.ms), mm = val('precipitation', h.ms), gu = gustAt(h.ms);
+      const see = t && h.tAlt > 10 ? h.tSee : h.see?.total;
+      const fails = [];
+      if (t && !(h.tAlt >= minAlt)) fails.push('low');
+      if (cl != null && cl >= 60) fails.push('cloud');
+      if ((mm != null && mm >= 0.1) || (rp != null && rp >= 50)) fails.push('rain');
+      if (gu != null && gu > lim * 1.3) fails.push('wind');
+      if (see != null && see > 4) fails.push('seeing');
+      fails.forEach((f) => { why[f] = (why[f] || 0) + 1; });
+      if (fails.length) return 0;
+      const marg = (cl != null && cl >= 30) || (gu != null && gu > lim) || (see != null && see > 2.8) || (rp != null && rp >= 25);
+      return marg ? 1 : 2;
+    });
+    // longest run of good hours; if none, of usable (good or marginal) hours
+    const run = (minG) => { let best = [0, -1, -1], s0 = -1; grade.forEach((v, k) => { if (v >= minG) { if (s0 < 0) s0 = k; if (k - s0 + 1 > best[0]) best = [k - s0 + 1, s0, k]; } else s0 = -1; }); return best; };
+    let [n, a, b] = run(2), kind = 'good';
+    if (!n) { [n, a, b] = run(1); kind = n ? 'marginal' : 'none'; }
+    const dot = `<span class="rigdot" style="--c:${r.color}"></span>`;
+    const name = `${esc(sc.name)} + ${esc(g.c.name)}`;
+    if (kind === 'none') {
+      const main = Object.entries(why).sort((x, y) => y[1] - x[1])[0]?.[0];
+      lines.push(`${dot}<b>${name}</b> <span class="tag bad">no good window</span> <span class="note">${main ? 'mostly ' + REASON[main] : ''}</span>`);
+      continue;
+    }
+    bestAll = Math.max(bestAll, kind === 'good' ? n : n / 2);
+    const span = dark.slice(a, b + 1);
+    const cl = Math.max(...span.map((h) => val('cloud_cover', h.ms) ?? 0));
+    const sees = span.map((h) => (t && h.tAlt > 10 ? h.tSee : h.see?.total)).filter((x) => x != null).sort((x, y) => x - y);
+    const seeMed = sees.length ? sees[Math.floor(sees.length / 2)] : null;
+    const gmax = Math.max(...span.map((h) => gustAt(h.ms) ?? 0));
+    const bits = [cl < 20 ? 'clear' : cl < 50 ? `cloud to ${Math.round(cl)}%` : `cloudy at times`,
+      seeMed != null ? `seeing ${seeMed.toFixed(1)}″` : null,
+      gmax ? (gmax <= lim ? 'wind OK' : `gusts ${Math.round(gmax)} km/h`) : null].filter(Boolean).join(' · ');
+    const end = span[span.length - 1].ms + 3600e3;
+    lines.push(`${dot}<b>${name}</b> <span class="tag ${kind === 'good' ? 'good' : 'warn'}">${kind === 'good' ? 'good' : 'marginal'} ${hhmm(span[0].ms)}–${hhmm(end)} (${n} h)</span> <span class="note">${bits}</span>`);
+  }
+  const head = !rigs.length ? 'Turn on a rig to see its night.' : bestAll >= 5 ? '<span class="tag good">Great night</span>' : bestAll >= 2 ? '<span class="tag good">Good night</span>'
+    : bestAll > 0 ? '<span class="tag warn">Short or marginal window</span>' : '<span class="tag bad">Poor night</span>';
+  const notes = [t ? `for <b>${tName}</b> above ${minAlt}°` : 'no target loaded: sky only',
+    illum > 0.25 ? `Moon ${Math.round(illum * 100)}% lit` : 'dark Moon',
+    cmpSpread >= 30 ? '<span class="tag warn">models disagree</span> treat with care' : null].filter(Boolean).join(' · ');
+  box.innerHTML = `<div class="vhead">${head} <span class="note">${notes}</span></div>${lines.map((l) => `<div class="vline">${l}</div>`).join('')}`;
 }
 const LAYER_NAME = { ground: 'ground layer (<1 km)', low: 'low air (1–3 km)', mid: 'mid air (3–8 km)', high: 'jet / tropopause (>8 km)' };
 const airmassFactor = (alt) => Math.pow(1 / Math.sin(Math.max(alt, 5) * D2R), 0.6);
@@ -1895,14 +2031,14 @@ function renderWeather(w, a, t0, t1, c) {
     }
   }
   const offMin = Math.round(((tz % 1) + 1) % 1 * 60);
-  html += `</div><div class="wxnote">Bold hours are astronomical darkness.${offMin ? ` Columns are hourly forecasts at <b>:${String(offMin).padStart(2, '0')}</b> past each local hour shown (this time zone is offset from UTC by a fraction of an hour).` : ''} <b>Seeing</b> is a model estimate (FWHM at 500 nm, zenith) from temperature and wind at 16 heights up to ~16 km; hover a cell for the main turbulent layer.
+  html += `</div><details class="info" id="wxInfo" ${wxInfoOpen ? 'open' : ''}><summary>ⓘ How to read this table</summary><div class="wxnote">Bold hours are astronomical darkness.${offMin ? ` Columns are hourly forecasts at <b>:${String(offMin).padStart(2, '0')}</b> past each local hour shown (this time zone is offset from UTC by a fraction of an hour).` : ''} <b>Seeing</b> is a model estimate (FWHM at 500 nm, zenith) from temperature and wind at 16 heights up to ~16 km; hover a cell for the main turbulent layer.
     <b>Free air</b> leaves out the lowest 1 km, which depends heavily on your own site. <b>On target</b> adds the extra air at the target's altitude.
     <b>Jet</b> = strongest wind at 300–200 hPa (9–12 km). <b>Cool</b> = how fast the air is cooling; above 2°/h expect tube currents, so let the scope cool.
     Dew gap under 2° means dew risk. AOD above 0.6 means a milky, dusty sky. <b>Visibility</b> under 10 km means haze, dust or moisture near the ground; both feed the transparency rating.
     <b>Gust</b> is the strongest of the four forecasts${biasOn ? `, scaled ×${wb.ratio.toFixed(1)} because the ${esc(wb.station)} airport is measuring more wind than forecast` : ''}. <b>Wind 100m</b>: when it is much stronger than at the ground, gusts can come down in bursts even on a "calm" forecast.
     <b>💨 rows</b> compare gusts with each telescope's wind limit (Equipment): ✓ fine, ~ marginal, ✕ too windy for good guiding.
     <b>Storm</b> is atmospheric instability (CAPE): ! = showers possible, !! = thunderstorms possible. Cloud forecasts often miss storms, so treat !! as a warning even when the cloud row looks clear.
-    ${c ? `<b>ECMWF / ICON / GFS ☁</b> = total cloud from three independent models; when they disagree, the forecast is uncertain.` : ''}</div>`;
+    ${c ? `<b>ECMWF / ICON / GFS ☁</b> = total cloud from three independent models; when they disagree, the forecast is uncertain.` : ''}</div></details>`;
   $('#wx').innerHTML = html;
 
   // Summary over dark hours
@@ -1935,6 +2071,7 @@ function renderWeather(w, a, t0, t1, c) {
   const mainLayer = Object.entries(mains).sort((x, y) => y[1] - x[1])[0]?.[0];
   state.fcSeeing = seeT ?? seeZ;
   renderRigStats();
+  renderVerdict({ hours, val, gustAt, tz, t, cmpSpread: (() => { const v = c ? CMP_MODELS.map((m) => avg((ms) => Cm('cloud_cover_' + m.id, ms))).filter((x) => x != null) : []; return v.length >= 2 ? Math.max(...v) - Math.min(...v) : 0; })(), illum: moonPhase((t0 + t1) / 2).illum });
   if (cloud == null) { $('#wxSum').innerHTML = '<span class="note">No forecast data for this night.</span>'; return; }
   const tag = (c, txt) => `<span class="tag ${c}">${txt}</span>`;
   const sky = cloud < 20 ? tag('good', 'clear') : cloud < 50 ? tag('warn', 'partly cloudy') : tag('bad', 'cloudy');
@@ -2203,6 +2340,166 @@ function saveEq() {
   saveStore(); $('#eqDlg').close(); renderRigs(); drawFrames(); rerenderWeather();
 }
 
+
+/* ---------- Comets: Minor Planet Center orbits (CometEls.txt, CORS-enabled), refreshed daily ---------- */
+// Positions verified against Skyfield/DE421 to better than 0.1′.
+function parseCometLine(l) {
+  if (!l || l.length < 102) return null;
+  const y = +l.slice(14, 18), mo = +l.slice(19, 21), dd = parseFloat(l.slice(22, 29));
+  const q = parseFloat(l.slice(30, 39)), e = parseFloat(l.slice(41, 49));
+  const w = parseFloat(l.slice(51, 59)), node = parseFloat(l.slice(61, 69)), inc = parseFloat(l.slice(71, 79));
+  const H = parseFloat(l.slice(91, 95)), G = parseFloat(l.slice(96, 100));
+  const name = l.slice(102, 158).trim();
+  if (![y, mo, dd, q, e, w, node, inc].every(Number.isFinite) || !name) return null;
+  const tp = Date.UTC(y, mo - 1, 1) / 864e5 + 2440587.5 + dd - 1;   // JD of perihelion (TT ≈ UTC here)
+  return { name, tp, q, e, w, node, inc, H: Number.isFinite(H) ? H : null, G: Number.isFinite(G) ? G : 4 };
+}
+function cometHelio(c, JD) {          // heliocentric ecliptic J2000 position, AU
+  const k = 0.01720209895, dt = JD - c.tp, { q, e } = c;
+  let r, nu;
+  if (Math.abs(e - 1) < 1e-4) {        // parabola: Barker's equation
+    const W = 3 * k / Math.sqrt(2 * q * q * q) * dt;
+    const Y = Math.cbrt(W / 2 + Math.sqrt(W * W / 4 + 1));
+    const s = Y - 1 / Y;
+    nu = 2 * Math.atan(s); r = q * (1 + s * s);
+  } else if (e < 1) {
+    const a = q / (1 - e), M = k / Math.pow(a, 1.5) * dt;
+    const Mn = ((M % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
+    let E = e < 0.8 ? Mn : Math.PI * Math.sign(Mn) || 0.1;
+    for (let i = 0; i < 60; i++) { const d = (E - e * Math.sin(E) - Mn) / (1 - e * Math.cos(E)); E -= d; if (Math.abs(d) < 1e-12) break; }
+    r = a * (1 - e * Math.cos(E));
+    nu = 2 * Math.atan2(Math.sqrt(1 + e) * Math.sin(E / 2), Math.sqrt(1 - e) * Math.cos(E / 2));
+  } else {
+    const a = q / (e - 1), M = k / Math.pow(a, 1.5) * dt;
+    let Hh = Math.asinh(M / e);
+    for (let i = 0; i < 60; i++) { const d = (e * Math.sinh(Hh) - Hh - M) / (e * Math.cosh(Hh) - 1); Hh -= d; if (Math.abs(d) < 1e-12) break; }
+    r = a * (e * Math.cosh(Hh) - 1);
+    nu = 2 * Math.atan(Math.sqrt((e + 1) / (e - 1)) * Math.tanh(Hh / 2));
+  }
+  const u = (c.w * D2R) + nu, O = c.node * D2R, i = c.inc * D2R;
+  return [r * (Math.cos(O) * Math.cos(u) - Math.sin(O) * Math.sin(u) * Math.cos(i)),
+          r * (Math.sin(O) * Math.cos(u) + Math.cos(O) * Math.sin(u) * Math.cos(i)),
+          r * Math.sin(u) * Math.sin(i), r];
+}
+function sunGeoEcl(JD) {               // geocentric Sun, ecliptic J2000-ish, AU (low precision, ~0.01°)
+  const n = JD - 2451545.0, L = (280.460 + 0.9856474 * n) * D2R, g = (357.528 + 0.9856003 * n) * D2R;
+  const lam = L + (1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * D2R;
+  const R = 1.00014 - 0.01671 * Math.cos(g) - 0.00014 * Math.cos(2 * g);
+  // remove precession of the equinox since J2000 (longitudes above are of date)
+  const lam2000 = lam - (n / 36525) * 1.3969713 * D2R;
+  return [R * Math.cos(lam2000), R * Math.sin(lam2000), 0];
+}
+const EPS_J2000 = 23.4392911 * D2R;
+function cometRaDec(c, ms) {
+  const JD = jd(ms);
+  const S = sunGeoEcl(JD);
+  let P = cometHelio(c, JD), x, y, z, D;
+  for (let it = 0; it < 2; it++) {     // light-time
+    x = P[0] + S[0]; y = P[1] + S[1]; z = P[2] + S[2]; D = Math.hypot(x, y, z);
+    P = cometHelio(c, JD - D * 0.0057755183);
+  }
+  x = P[0] + S[0]; y = P[1] + S[1]; z = P[2] + S[2]; D = Math.hypot(x, y, z);
+  const ye = y * Math.cos(EPS_J2000) - z * Math.sin(EPS_J2000), ze = y * Math.sin(EPS_J2000) + z * Math.cos(EPS_J2000);
+  const ra = ((Math.atan2(ye, x) * R2D) % 360 + 360) % 360, dec = Math.asin(ze / D) * R2D;
+  const r = P[3];
+  const mag = c.H == null ? null : c.H + 5 * Math.log10(D) + 2.5 * c.G * Math.log10(r);
+  return { ra, dec, delta: D, r, mag };
+}
+
+const COMET_KEY = 'mrp.comets.v1', COMET_MAG = 12;
+let cometList = null, cometCache = null, cometSel = 0;
+async function loadComets() {
+  try {
+    const c = JSON.parse(localStorage.getItem(COMET_KEY) || 'null');
+    if (c && Date.now() - c.t < 864e5) { cometList = c.lines.map(parseCometLine).filter(Boolean); renderComets(); return; }
+  } catch {}
+  try {
+    const r = await fetch('https://www.minorplanetcenter.net/iau/MPCORB/CometEls.txt');
+    if (!r.ok) throw new Error('MPC ' + r.status);
+    const y = new Date().getUTCFullYear();
+    const lines = (await r.text()).split('\n').filter((l) => { const py = +l.slice(14, 18), q = parseFloat(l.slice(30, 39)); return l.length > 100 && py >= y - 2 && py <= y + 3 && q < 6; });
+    cometList = lines.map(parseCometLine).filter(Boolean);
+    try { localStorage.setItem(COMET_KEY, JSON.stringify({ t: Date.now(), lines })); } catch {}
+  } catch {
+    try { const c = JSON.parse(localStorage.getItem(COMET_KEY) || 'null'); if (c) cometList = c.lines.map(parseCometLine).filter(Boolean); } catch {}
+  }
+  renderComets();
+}
+function computeComets() {
+  if (!cometList) return [];
+  const { lat, lon } = state.site, { t0, t1 } = nightWindow(), minAlt = state.tn.minAlt || 30;
+  const steps = [];
+  for (let ms = t0; ms <= t1; ms += 20 * 60e3) { const [sr, sd] = sunRaDec(ms); if (altAz(sr, sd, ms, lat, lon) < -18) steps.push(ms); }
+  if (!steps.length) return [];
+  const mid = steps[Math.floor(steps.length / 2)];
+  const out = [];
+  for (const c of cometList) {
+    const p = cometRaDec(c, mid);
+    if (p.mag == null || p.mag > COMET_MAG) continue;
+    let good = 0, peak = -90, peakMs = mid;
+    for (const ms of steps) { const a = altAz(p.ra, p.dec, ms, lat, lon); if (a > peak) { peak = a; peakMs = ms; } if (a >= minAlt) good += 20; }
+    if (good < 30) continue;
+    const p2 = cometRaDec(c, mid + 3600e3);
+    const rate = angSep(p.ra, p.dec, p2.ra, p2.dec) * 3600 / 60;   // ″ per minute
+    out.push({ c, p, hours: good / 60, peak, peakMs, rate });
+  }
+  return out.sort((a, b) => a.p.mag - b.p.mag);
+}
+function renderComets() {
+  const card = $('#cometCard'); if (!card) return;
+  cometCache = computeComets();
+  card.hidden = !cometCache.length;
+  if (!cometCache.length) return;
+  const tz = state.site.tz, hhmm = (ms) => { const d = new Date(ms + tz * 3600e3); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
+  cometSel = Math.min(cometSel, cometCache.length - 1);
+  $('#cometCount').textContent = `${cometCache.length} up tonight`;
+  $('#cometPick').innerHTML = cometCache.map((x, k) => `<option value="${k}" ${k === cometSel ? 'selected' : ''}>${esc(x.c.name)} — mag ~${x.p.mag.toFixed(1)} · ${x.hours.toFixed(1)} h</option>`).join('');
+  const x = cometCache[cometSel];
+  const subs = state.rigs.filter((r) => r.on).map((r) => ({ r, g: rigGeom(r) })).filter((y) => y.g)
+    .map(({ r, g }) => `<span class="rigdot" style="--c:${r.color};display:inline-block;margin-right:4px"></span>${Math.max(1, Math.round(g.scale / x.rate * 60))} s`).join(' · ');
+  $('#cometInfo').innerHTML = `<div class="tn-item sel" data-comet="${cometSel}" tabindex="0" role="button" title="Load on the map">
+      <div class="tn-kicker">tap to load · placed for ${hhmm(x.peakMs)}</div>
+      <div class="tn-l1"><b>${esc(x.c.name)}</b> <span class="tag ${x.p.mag < 9 ? 'good' : 'warn'}">mag ~${x.p.mag.toFixed(1)}</span></div>
+      <div class="tn-l2"><b>${x.hours.toFixed(1)} h</b> above ${state.tn.minAlt || 30}° · max ${Math.round(x.peak)}° at ${hhmm(x.peakMs)} · ${x.p.delta.toFixed(2)} AU from Earth, ${x.p.r.toFixed(2)} AU from the Sun</div>
+      <div class="tn-l2">Moves ${x.rate.toFixed(2)}″/min${subs ? ` · max sub before it trails: ${subs}` : ''}</div>
+    </div>`;
+}
+function showComet(x) {
+  const pos = cometRaDec(x.c, x.peakMs);
+  const t = { name: x.c.name, mainId: x.c.name, ra: pos.ra, dec: pos.dec, typeDesc: 'Comet', otype: 'Comet', mags: { V: +pos.mag.toFixed(1) }, aliases: [], comet: true };
+  setTarget(t, { maj: 10, min: 10, pa: 0, src: 'comet coma (rough)' }, x.c.name);
+  track('comet');
+}
+$('#cometPick')?.addEventListener('change', (e) => { cometSel = +e.target.value; renderComets(); });
+$('#cometInfo')?.addEventListener('click', (e) => { const el = e.target.closest('[data-comet]'); if (el && cometCache[+el.dataset.comet]) { setTab('frame'); showComet(cometCache[+el.dataset.comet]); } });
+function findComet(q) {          // "C/2025 R2", "12P", "Tsuchinshan" …
+  if (!cometList || q.length < 3) return null;
+  const s = q.trim().toLowerCase().replace(/\s+/g, ' ');
+  const hit = cometList.find((c) => { const n = c.name.toLowerCase(); return n === s || n.startsWith(s + '/') || n.startsWith(s + ' (') || (s.length >= 5 && n.includes('(' + s)); })
+    || (/^(\d+[pdi]|[cpdxai]\/)/i.test(s) ? cometList.find((c) => c.name.toLowerCase().startsWith(s)) : null);
+  if (!hit) return null;
+  const { t0, t1 } = nightWindow(), mid = (t0 + t1) / 2;
+  return { c: hit, peakMs: mid };
+}
+
+/* ---------- Tabs ---------- */
+const TABS = ['frame', 'tonight', 'sky', 'gear'];
+function setTab(name, quiet) {
+  if (!TABS.includes(name)) name = 'frame';
+  const app = $('#app'), was = app.dataset.tab;
+  app.dataset.tab = name;
+  for (const b of document.querySelectorAll('#tabs [data-go]')) b.setAttribute('aria-selected', b.dataset.go === name ? 'true' : 'false');
+  try { localStorage.setItem('mrp.tab', name); } catch {}
+  if (was && was !== name) {
+    $('aside').scrollTop = 0; if (window.matchMedia('(max-width: 860px)').matches) window.scrollTo(0, 0);
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 50);   // map size changes with the layout
+    if (!quiet) track('tab/' + name);
+  }
+  if (name === 'sky' || name === 'tonight') setTimeout(drawAltChart, 60);
+}
+$('#tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) setTab(b.dataset.go); });
+setTab((() => { try { return localStorage.getItem('mrp.tab'); } catch { return null; } })() || 'frame', true);
+
 /* ---------- Wire up ---------- */
 $('#searchForm').addEventListener('submit', (e) => { e.preventDefault(); search($('#q').value); });
 // iPhone Safari only fires 'change' (not 'input') for dropdowns and checkboxes, so listen to both
@@ -2215,6 +2512,11 @@ $('#rigs').addEventListener('click', (e) => {
   saveStore(); renderRigStats(); scheduleTonight(); track('filter-use');
 });
 $('#rigs').addEventListener('click', (e) => {
+  const tg = e.target.closest('[data-act=toggle]'); if (!tg) return;
+  const el = tg.closest('.rig'), r = state.rigs.find((x) => x.id === el.dataset.id); if (!r) return;
+  r.open = !r.open; el.classList.toggle('open', r.open); tg.setAttribute('aria-expanded', r.open ? 'true' : 'false'); saveStore();
+});
+$('#rigs').addEventListener('click', (e) => {
   if (e.target.dataset.act !== 'del') return;
   const id = e.target.closest('.rig').dataset.id;
   state.rigs = state.rigs.filter((r) => r.id !== id); saveStore(); renderRigs(); drawFrames();
@@ -2222,7 +2524,7 @@ $('#rigs').addEventListener('click', (e) => {
 $('#addRig').addEventListener('click', () => {
   const used = new Set(state.rigs.map((r) => r.color));
   state.rigs.push({ id: newId(), scope: state.scopes[0].id, cam: state.cams[0].id, factor: 1, rot: 0, cols: 1, rows: 1, overlap: 15,
-    color: COLORS.find((c) => !used.has(c)) || COLORS[state.rigs.length % COLORS.length], on: true });
+    color: COLORS.find((c) => !used.has(c)) || COLORS[state.rigs.length % COLORS.length], on: true, open: true });
   saveStore(); renderRigs(); drawFrames();
 });
 $('#fitBtn').addEventListener('click', fitView);
@@ -2355,6 +2657,7 @@ renderLoc();
 renderMoon();
 updateSky();
 loadExtCatalogs();
+loadComets();
 // target details: open by default on wide screens, remembered after that
 { let open = null; try { open = localStorage.getItem('mrp.tgtOpen'); } catch {}
   $('#tgtDetails').open = open != null ? open === '1' : window.innerWidth > 860;

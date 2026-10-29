@@ -4,6 +4,23 @@
 
 Plan astrophotography with **several telescope + camera combinations overlaid on the same target at once**, and find out which targets actually suit *your* equipment, tonight, under *your* sky.
 
+## Layout
+
+- Four tabs, one job each: **Frame** (search, target, rigs), **Tonight** (night verdict, comets, target list, visibility), **Sky** (location, Moon, forecast) and **Gear** (my images, settings, backup)
+- On phones the tabs sit at the bottom and the sky map stays on screen while you adjust rigs; on desktop the panel widens for Tonight and Sky
+- Rig cards are one line each (field of view, image scale, fit and filter tags); tap a rig to open its settings
+
+## Tonight at a glance
+
+- One line per rig with the best window of the night, e.g. "good 22:00–03:00 (5 h) · clear · seeing 1.4″ · wind OK", or the main reason there is none (cloud, rain, wind, seeing, or the target too low)
+- Uses the loaded target's altitude, cloud, rain, the worst-case gusts against each telescope's wind limit, and the seeing estimate
+
+## Comets
+
+- Comets brighter than about magnitude 12 that are up during darkness, from the Minor Planet Center's current orbits (refreshed daily); positions are computed in the browser (checked against Skyfield/DE421 to better than 0.1′)
+- Shows predicted magnitude, hours up, distances, how fast the comet moves, and the longest sub-exposure on each rig before it trails
+- Search a comet by designation or name (e.g. 12P, C/2025 R2, Tsuchinshan)
+
 ## Framing
 
 - Search any object by name (M31, NGC 7000, "Pelican Nebula", LDN 1622) or coordinates (`20 58 47 +44 20` or `314.7 44.3`)
@@ -67,6 +84,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Sky viewer: [Aladin Lite v3](https://aladin.cds.unistra.fr/AladinLite/) (CDS); DSS2 and 2MASS images fall back to the [ESA Sky](https://sky.esa.int/) mirror, and name lookups to the SIMBAD mirror at Harvard (CfA), when CDS is down
 - Narrowband imagery: Northern Sky Narrowband Survey by Stefan Ziegenbalg ([CC BY-NC-SA 4.0](http://www.simg.de/nebulae3/dr0_2/)); IPHAS DR2 Hα
 - Light pollution: [Light Pollution Atlas](https://djlorenz.github.io/astronomy/lp/) by David Lorenz (Bortle class is an approximation from sky brightness)
+- Comet orbits: [Minor Planet Center](https://www.minorplanetcenter.net/)
 - Weather and air quality: [Open-Meteo](https://open-meteo.com/); airport observations: [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/) (Iowa State University); astronomical forecast chart: [7Timer!](https://www.7timer.info/)
 
 Single file (`index.html`), no build step. Hosted on Cloudflare Pages.
