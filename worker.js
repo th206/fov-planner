@@ -39,7 +39,7 @@ async function writeIndex(env, items) {
   await env.GALLERY.put('index.json', JSON.stringify(items), { httpMetadata: { contentType: 'application/json' } });
 }
 
-const TEXT_FIELDS = ['title', 'target', 'date', 'location', 'bortle', 'rig', 'telescope', 'camera', 'filters', 'integration', 'software', 'notes'];
+const TEXT_FIELDS = ['title', 'target', 'date', 'location', 'bortle', 'rig', 'telescope', 'camera', 'filters', 'integration', 'software', 'notes', 'credit', 'license', 'source'];
 function cleanMeta(m) {
   const out = {};
   for (const k of TEXT_FIELDS) if (m[k] != null) out[k] = String(m[k]).slice(0, k === 'notes' ? 4000 : 300);
@@ -50,6 +50,8 @@ function cleanMeta(m) {
   }
   if (m.w) out.w = +m.w; if (m.h) out.h = +m.h;
   if (typeof m.flip === 'boolean') out.flip = m.flip;
+  if (m.kind === 'mine' || m.kind === 'ref') out.kind = m.kind;
+  if (out.source && !/^https?:\/\//i.test(out.source)) delete out.source;
   return out;
 }
 
