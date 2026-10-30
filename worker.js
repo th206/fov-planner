@@ -49,6 +49,7 @@ function cleanMeta(m) {
     out.wcs = { crval: m.wcs.crval.map(Number), crpix: m.wcs.crpix.map(Number), cd: m.wcs.cd.map(Number), w: +m.wcs.w, h: +m.wcs.h };
   }
   if (m.w) out.w = +m.w; if (m.h) out.h = +m.h;
+  if (typeof m.flip === 'boolean') out.flip = m.flip;
   return out;
 }
 
