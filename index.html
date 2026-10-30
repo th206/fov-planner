@@ -104,7 +104,8 @@
   #surveyCredit { position: absolute; right: 10px; top: 52px; z-index: 20; font-size: 10.5px; color: var(--muted); background: rgba(10,13,20,.7); padding: 2px 6px; border-radius: 5px; pointer-events: auto; }
   #surveyCredit a { color: var(--muted); }
   @media (max-width: 600px) {
-    #boostBox { left: auto; right: 8px; transform: none; top: 52px; padding: 4px 8px; }
+    #boostBox { left: 104px; right: 8px; transform: none; top: 46px; padding: 4px 8px; flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
+    #boostBox select { flex: 1 1 120px; min-width: 0; }
     #boostBox span { display: none; } #boostBox input { width: 70px; } #boostBox select { max-width: 130px; }
     #surveyCredit { top: auto; bottom: 8px; right: 8px; }
     #hud { display: none; }
@@ -375,7 +376,7 @@
 
     <section data-tab="gallery" class="card" id="galleryCard">
       <h2>Gallery <span class="row"><span class="note" id="galCount"></span><button class="icon" id="galAdd" hidden>+ Add image</button></span></h2>
-      <label class="note"><input type="checkbox" id="galOverlay"> Show plate-solved gallery images on the sky map</label>
+      <label class="note"><input type="checkbox" id="galOverlay"> Show my photos on the sky map (also the “Photos” switch on the map)</label>
       <div id="galMsg" class="note"></div>
       <div id="galGrid" class="galgrid"></div>
       <div id="galDetail" hidden></div>
@@ -446,6 +447,7 @@
       <select id="survey2" aria-label="Sky survey" title="Sky survey"></select>
       <span>✦ Faint detail</span>
       <input type="range" id="boost" min="0" max="100" step="1" aria-label="Faint detail boost">
+      <label class="dustlbl" title="Show or hide your own photos (Gallery and My images) on the sky"><input type="checkbox" id="photosOn"> Photos</label>
       <label class="dustlbl" title="Glow of interstellar dust (IRAS 100 µm). Dark nebulae are dust clouds: they show up bright here, so you can see their shape and extent. Turns on by itself for dark nebulae."><input type="checkbox" id="dustOn"> Dust</label>
     </div>
     <div id="legend"></div>
@@ -1062,7 +1064,7 @@ function inView(rec) {
 }
 function refreshImageLayers(force) {
   if (!aladin) return;
-  const recs = [...imgCache, ...galleryRecs()];
+  const recs = state.galOverlay ? [...imgCache, ...galleryRecs()] : [];
   for (const [id, cur] of imgShown) if (!recs.some((r) => r.id === id)) { aladin.removeImageLayer(cur.layer); imgShown.delete(id); }
   for (const rec of recs) {
     const want = rec.on && inView(rec), cur = imgShown.get(rec.id);
@@ -2682,7 +2684,7 @@ $('#galDetail').addEventListener('click', async (e) => {
   if (act === 'back') { $('#galDetail').hidden = true; $('#galGrid').hidden = false; }
   else if (act === 'map') {
     const fp = imgFootprint(it.wcs);
-    state.galOverlay = true; saveStore();
+    setPhotos(true);
     setTab('frame');
     state.center = [fp.ra, fp.dec]; aladin?.gotoRaDec(fp.ra, fp.dec); aladin?.setFoV(Math.max(0.2, fp.radius * 2.4));
     drawFrames(); updateHud(); refreshImageLayers(true); track('gallery/map');
@@ -2698,7 +2700,14 @@ $('#galDetail').addEventListener('click', async (e) => {
     catch (err) { $('#galMsg').textContent = err.message; }
   }
 });
-$('#galOverlay').addEventListener('change', (e) => { state.galOverlay = e.target.checked; saveStore(); refreshImageLayers(true); });
+function setPhotos(on) {
+  state.galOverlay = on; saveStore();
+  $('#galOverlay').checked = on; $('#photosOn').checked = on;
+  refreshImageLayers(true);
+}
+$('#galOverlay').addEventListener('change', (e) => setPhotos(e.target.checked));
+$('#photosOn').addEventListener('change', (e) => { setPhotos(e.target.checked); track('photos/' + (e.target.checked ? 'on' : 'off')); });
+$('#photosOn').checked = state.galOverlay;
 $('#galOwner').addEventListener('click', async (e) => {
   e.preventDefault();
   if (galKey()) { try { localStorage.removeItem('mrp.gkey'); } catch {} renderGallery(); return; }
