@@ -77,6 +77,9 @@
   .tag.warn { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
   .tag.bad  { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
   #hud { position: absolute; left: 10px; bottom: 44px; background: rgba(10,13,20,.78); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none; z-index: 20; }
+  .dustlbl { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; flex: none; }
+  .dustlbl input { width: auto !important; margin: 0; flex: none; }
+  #boostBox > span { white-space: nowrap; }
   #boostBox { position: absolute; left: 50%; transform: translateX(-50%); top: 10px; z-index: 20; display: flex; align-items: center; gap: 8px;
     background: rgba(10,13,20,.78); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; font-size: 12px; color: var(--muted); }
   #boostBox input { width: 110px; accent-color: var(--accent); }
@@ -119,7 +122,17 @@
   .tnfilters { margin-top: 8px; }
   .tnfilters summary { cursor: pointer; padding: 4px 0; }
   .tnfilters[open] summary { margin-bottom: 6px; }
-  .tn-item.sel { border-color: var(--accent); }
+  .tn-item .loadbtn { float: right; font-size: 11px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--accent); background: var(--panel); }
+  .tn-item.loaded { border-color: var(--good, #3fb950); box-shadow: inset 3px 0 0 var(--good, #3fb950); }
+  .tn-item.loaded .loadbtn { color: var(--good, #3fb950); border-color: transparent; background: none; }
+  .loadedbar { font-size: 12.5px; color: var(--muted); margin: -2px 0 8px; }
+  .loadedbar b { color: var(--text); }
+  .cometsum { list-style: none; cursor: pointer; }
+  .cometsum::-webkit-details-marker { display: none; }
+  .cometsum h2 { justify-content: flex-start; gap: 6px; }
+  .cometsum h2::before { content: '▸'; color: var(--muted); }
+  #cometDet[open] .cometsum h2::before { content: '▾'; }
+  .cometsum h2 #cometCount { margin-left: auto; }
   .tn-kicker { font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 3px; }
   .tn-item { padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); cursor: pointer; }
   .tn-item:hover, .tn-item:focus { border-color: var(--accent); outline: none; }
@@ -256,19 +269,16 @@
 
     <section data-tab="tonight" class="card" id="verdictCard">
       <h2>Tonight at a glance <span class="note" id="verdictWhen"></span></h2>
+      <div class="loadedbar" id="loadedBar"></div>
       <div id="verdict" class="note">Waiting for the forecast…</div>
     </section>
 
-    <section data-tab="tonight" class="card" id="cometCard" hidden>
-      <h2>Comets <span class="note" id="cometCount"></span></h2>
-      <select id="cometPick" class="tnpick" aria-label="Choose a comet"></select>
-      <div id="cometInfo"></div>
-      <details class="info"><summary>ⓘ About comets</summary>
-        <div class="wxnote">Comets brighter than about magnitude 12 that are up during darkness from your site, from the Minor Planet Center's current orbits (refreshed daily).
-        Brightness is a prediction and comets often run 1–2 magnitudes brighter or fainter. Comets move against the stars, so the frame is placed for the time shown;
-        the max sub-exposure keeps the comet's own motion under one pixel on that rig. Tails can stretch far beyond the frame.</div>
-      </details>
+    <section data-tab="tonight" class="card">
+      <h2><span>Visibility <span class="note loadedname" id="visName"></span></span> <input id="night" type="date" aria-label="Night of"></h2>
+      <canvas id="altChart" aria-label="Altitude of target through the night"></canvas>
+      <div class="altsum" id="altSum"></div>
     </section>
+
 
     <section data-tab="tonight" class="card" id="tonightCard">
       <h2>Tonight's targets <span class="note" id="tnCount"></span></h2>
@@ -293,11 +303,19 @@
         Pick a target from the list to load it; for mosaics the rig's grid and rotation are set for you. Catalog: OpenNGC (CC-BY-SA 4.0) and Sharpless (1959).</div></details>
     </section>
 
-    <section data-tab="tonight" class="card">
-      <h2>Visibility <input id="night" type="date" aria-label="Night of"></h2>
-      <canvas id="altChart" aria-label="Altitude of target through the night"></canvas>
-      <div class="altsum" id="altSum"></div>
+    <section data-tab="tonight" class="card" id="cometCard" hidden>
+      <details id="cometDet">
+      <summary class="cometsum"><h2 style="margin:0">Comets <span class="note" id="cometCount"></span></h2></summary>
+      <select id="cometPick" class="tnpick" aria-label="Choose a comet" style="margin-top:8px"></select>
+      <div id="cometInfo"></div>
+      <details class="info"><summary>ⓘ About comets</summary>
+        <div class="wxnote">Comets brighter than about magnitude 12 that are up during darkness from your site, from the Minor Planet Center's current orbits (refreshed daily).
+        Brightness is a prediction and comets often run 1–2 magnitudes brighter or fainter. Comets move against the stars, so the frame is placed for the time shown;
+        the max sub-exposure keeps the comet's own motion under one pixel on that rig. Tails can stretch far beyond the frame.</div>
+      </details>
+      </details>
     </section>
+
 
     <section data-tab="sky" class="card">
       <h2><span>Conditions <span class="note" id="skyWhen" style="text-transform:none;letter-spacing:0"></span></span> <button class="icon ghost" id="wxReload" title="Refresh forecast">↻</button></h2>
@@ -400,6 +418,7 @@
       <select id="survey2" aria-label="Sky survey" title="Sky survey"></select>
       <span>✦ Faint detail</span>
       <input type="range" id="boost" min="0" max="100" step="1" aria-label="Faint detail boost">
+      <label class="dustlbl" title="Glow of interstellar dust (IRAS 100 µm). Dark nebulae are dust clouds: they show up bright here, so you can see their shape and extent. Turns on by itself for dark nebulae."><input type="checkbox" id="dustOn"> Dust</label>
     </div>
     <div id="legend"></div>
     <div id="fatal"></div>
@@ -470,7 +489,7 @@ function saveStore() {
   try {
     localStorage.setItem(KEY, JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel,
+      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust,
     }));
   } catch { /* storage unavailable */ }
 }
@@ -486,6 +505,7 @@ const state = {
   follow: saved.follow ?? true,
   useFcSeeing: saved.useFcSeeing ?? true,
   wxModel: saved.wxModel || 'best_match',
+  dust: saved.dust || 'auto',
   windBias: null,
   filters: saved.filters || [],
   boost: saved.boost ?? 30,
@@ -594,6 +614,7 @@ async function initAladin() {
   });
   aladin.on('zoomChanged', () => { updateHud(); scheduleImageRefresh(); });
   shownSurvey = effectiveSurvey(); drawFrames(); updateHud(); applyBoost(); applySurvey(); renderImageList();
+  applyDust();
   probeMirrors();
 }
 
@@ -662,6 +683,7 @@ function effectiveSurvey() {
    from whichever copy answers: CDS Strasbourg, its second server, or ESA (Madrid). */
 const MIRRORS = {
   'CDS/P/DSS2/color': ['https://alasky.cds.unistra.fr/DSS/DSSColor', 'https://alaskybis.cds.unistra.fr/DSS/DSSColor', 'https://skies.esac.esa.int/DSSColor'],
+  'CDS/P/IRIS/color': ['https://alasky.cds.unistra.fr/IRISColor', 'https://alaskybis.cds.unistra.fr/IRISColor', 'https://skies.esac.esa.int/IRISColor'],
   'CDS/P/2MASS/color': ['https://alasky.cds.unistra.fr/2MASS/Color', 'https://alaskybis.cds.unistra.fr/2MASS/Color', 'https://skies.esac.esa.int/2MASSColor'],
 };
 let mirrorIdx = (() => { try { const v = JSON.parse(localStorage.getItem('mrp.mirror')); return v && Date.now() - v.t < 6 * 3600e3 ? v.i : 0; } catch { return 0; } })();
@@ -671,12 +693,12 @@ async function probeMirrors() {      // find the first DSS copy that answers; sw
   const probe = (u, ms) => new Promise((res) => { const ctl = new AbortController(); const tm = setTimeout(() => { ctl.abort(); res(false); }, ms);
     fetch(u + '/properties', { signal: ctl.signal, cache: 'no-store' }).then((r) => res(r.ok)).catch(() => res(false)).finally(() => clearTimeout(tm)); });
   const list = MIRRORS['CDS/P/DSS2/color'];
-  const ok = await Promise.all(list.map((u) => probe(u, 6000)));
+  const ok = await Promise.all(list.map((u) => probe(u, 3500)));
   const pick = ok.findIndex(Boolean);
   if (pick < 0 || pick === mirrorIdx) { cdsDown = mirrorIdx === 2; return; }
   mirrorIdx = pick; cdsDown = pick === 2;
   try { localStorage.setItem('mrp.mirror', JSON.stringify({ i: pick, t: Date.now() })); } catch {}
-  applySurvey(true);
+  applySurvey(true); dustShown = null; applyDust();
 }
 let shownSurvey = null;
 function applySurvey(force) {
@@ -701,6 +723,28 @@ function setSurveyChoice(v) {
   applySurvey();
 }
 
+/* Dust overlay: far-infrared dust glow (IRAS/IRIS 100 µm) over the survey, so dark nebulae show their shape */
+let dustShown = null;
+const isDarkTarget = () => { const t = state.target; if (!t) return false;
+  const co = CAT_INDEX.get(catKey(t.mainId || t.name || ''));
+  return TYPE_GROUP[co?.t] === 'dark' || ['DNe', 'DNeb', 'glb', 'MoC', 'Cld', 'cor', 'bub'].includes(t.otype) || /^(LDN|B|Barnard)\s*\d/i.test(normId(t.name || '')); };
+const dustWanted = () => (state.dust === 'on' ? true : state.dust === 'off' ? false : isDarkTarget());
+function applyDust() {
+  if (!aladin) return;
+  const want = dustWanted(), url = surveyUrl('CDS/P/IRIS/color');
+  $('#dustOn').checked = want;
+  if (want && dustShown !== url) {
+    try {
+      const L = A.imageHiPS(url, { name: 'Dust (IRAS 100 µm)', imgFormat: 'jpeg' });
+      aladin.setOverlayImageLayer(L, 'dust');
+      setTimeout(() => { try { aladin.getOverlayImageLayer('dust')?.setOpacity(0.55); } catch {} }, 300);
+      dustShown = url;
+    } catch (e) { console.warn(e); }
+  } else if (!want && dustShown) {
+    try { aladin.removeImageLayer('dust'); } catch {}
+    dustShown = null;
+  }
+}
 function applyBoost() {
   if (!aladin) return;
   const L = aladin.getBaseImageLayer(); if (!L) return;
@@ -1145,6 +1189,8 @@ function setTarget(t, size, label) {
   if (aladin) aladin.gotoRaDec(t.ra, t.dec);
   renderTarget(); drawTarget(); fitView(); drawFrames(); renderRigStats(); drawAltChart(); rerenderWeather(); updateHud();
   if (state.survey === 'auto') applySurvey();
+  applyDust();
+  markLoaded();
 }
 /* ---------- Tonight's targets: catalog ranked for your rigs ---------- */
 // Catalog: OpenNGC (CC-BY-SA 4.0, Mattia Verga) + Sharpless 1959 (VizieR VII/20). Rows: id, alt ids, common name, type, ra, dec, maj′, min′, pa, mag
@@ -1351,8 +1397,8 @@ function renderTonight() {
     : `<span class="tag warn" title="One frame covers about ${Math.round(f.cover * 100)}% of the target">${f.nc}×${f.nr} mosaic · 1 frame ≈ ${Math.round(f.cover * 100)}% of target</span>`;
   const rigLine = `<span class="rigdot" style="--c:${best.r.color}"></span>${esc(best.g.s.name)} + ${esc(best.g.c.name)}`;
   const size = c.maj === c.min ? `${c.maj}′` : `${c.maj}′×${c.min}′`;
-  $('#tnList').innerHTML = `<div class="tn-item sel" data-k="${sel}" tabindex="0" role="button" title="Load on the map">
-      <div class="tn-kicker">${sel === 0 ? 'Top pick' : `#${sel + 1} of ${items.length}`} · tap to load</div>
+  $('#tnList').innerHTML = `<div class="tn-item" data-k="${sel}" data-key="${esc(catKey(c.id))}" tabindex="0" role="button" title="Load on the map">
+      <span class="loadbtn"></span><div class="tn-kicker">${sel === 0 ? 'Top pick' : `#${sel + 1} of ${items.length}`}</div>
       <div class="tn-l1"><b>${esc(c.id)}</b> <span class="tn-name">${esc(c.name || c.alt.split(' · ')[0] || '')}</span> ${fitTag}</div>
       <div class="tn-l2">${TYPE_NAMES[c.t] || c.t} · ${size}${c.mag != null ? ` · mag ${c.mag}` : ''} · <b>${hours.toFixed(1)} h</b> · max ${Math.round(peak)}° at ${hhmm(peakMs)}${it.moonSensitive && it.moonSep < 180 ? ` · Moon ${Math.round(it.moonSep)}°` : ''}</div>
       <div class="tn-l2">${rigLine}</div>
@@ -1361,6 +1407,7 @@ function renderTonight() {
   $('#tnCount').textContent = `${items.length} target${items.length === 1 ? '' : 's'}`;
   const gl = Object.fromEntries(GROUPS);
   $('#tnFilterSum').textContent = `Filters: ${o.types.map((g) => gl[g]).join(', ') || 'no types'} · ≥${o.minAlt}° · fill ≥${o.minFill}% · ≤${o.maxPanels} panel${o.maxPanels == 1 ? '' : 's'}${o.avoidMoon ? ' · avoid Moon' : ''}`;
+  markLoaded();
 }
 function swapAdvice(g) {          // the broadband filter to use instead, from the user's own filters when possible
   const kind = camKind(g.c), want = kind === 'mono' ? ['bb'] : ['lp', 'uvir'];
@@ -2457,12 +2504,13 @@ function renderComets() {
   const x = cometCache[cometSel];
   const subs = state.rigs.filter((r) => r.on).map((r) => ({ r, g: rigGeom(r) })).filter((y) => y.g)
     .map(({ r, g }) => `<span class="rigdot" style="--c:${r.color};display:inline-block;margin-right:4px"></span>${Math.max(1, Math.round(g.scale / x.rate * 60))} s`).join(' · ');
-  $('#cometInfo').innerHTML = `<div class="tn-item sel" data-comet="${cometSel}" tabindex="0" role="button" title="Load on the map">
-      <div class="tn-kicker">tap to load · placed for ${hhmm(x.peakMs)}</div>
+  $('#cometInfo').innerHTML = `<div class="tn-item" data-comet="${cometSel}" data-key="${esc('comet:' + x.c.name)}" tabindex="0" role="button" title="Load on the map">
+      <span class="loadbtn"></span><div class="tn-kicker">Comet · placed for ${hhmm(x.peakMs)}</div>
       <div class="tn-l1"><b>${esc(x.c.name)}</b> <span class="tag ${x.p.mag < 9 ? 'good' : 'warn'}">mag ~${x.p.mag.toFixed(1)}</span></div>
       <div class="tn-l2"><b>${x.hours.toFixed(1)} h</b> above ${state.tn.minAlt || 30}° · max ${Math.round(x.peak)}° at ${hhmm(x.peakMs)} · ${x.p.delta.toFixed(2)} AU from Earth, ${x.p.r.toFixed(2)} AU from the Sun</div>
       <div class="tn-l2">Moves ${x.rate.toFixed(2)}″/min${subs ? ` · max sub before it trails: ${subs}` : ''}</div>
     </div>`;
+  markLoaded();
 }
 function showComet(x) {
   const pos = cometRaDec(x.c, x.peakMs);
@@ -2480,6 +2528,21 @@ function findComet(q) {          // "C/2025 R2", "12P", "Tsuchinshan" …
   if (!hit) return null;
   const { t0, t1 } = nightWindow(), mid = (t0 + t1) / 2;
   return { c: hit, peakMs: mid };
+}
+
+/* Which object is on the map: only that card is highlighted, and Tonight's headings name it */
+function loadedKey() { const t = state.target; if (!t) return ''; return t.comet ? 'comet:' + t.name : catKey(t.mainId || t.name || ''); }
+function markLoaded() {
+  const k = loadedKey(), t = state.target;
+  for (const el of document.querySelectorAll('.tn-item[data-key]')) {
+    const on = !!k && el.dataset.key === k;
+    el.classList.toggle('loaded', on);
+    const b = el.querySelector('.loadbtn'); if (b) b.textContent = on ? '✓ on the map' : 'Load ▸';
+  }
+  const nm = t ? esc(t.comet ? t.name : normId(t.mainId || t.name)) : '';
+  const kind = t ? (t.comet ? 'comet' : (t.typeDesc || '').toLowerCase()) : '';
+  $('#loadedBar').innerHTML = t ? `On the map: <b>${nm}</b>${kind ? ` · ${esc(kind)}` : ''} — the windows below are for this target` : 'No target loaded — load one from the list below or search under Frame.';
+  $('#visName').textContent = t ? '· ' + (t.comet ? t.name : normId(t.mainId || t.name)) : '';
 }
 
 /* ---------- Tabs ---------- */
@@ -2540,6 +2603,7 @@ $('#survey2').innerHTML = $('#survey').innerHTML;
 $('#survey').value = state.survey; $('#survey2').value = state.survey;
 $('#survey2').addEventListener('change', (e) => setSurveyChoice(e.target.value));
 $('#boost').value = state.boost;
+$('#dustOn').addEventListener('change', (e) => { state.dust = e.target.checked ? 'on' : (isDarkTarget() ? 'off' : 'auto'); saveStore(); applyDust(); track('dust/' + (e.target.checked ? 'on' : 'off')); });
 $('#boost').addEventListener('input', (e) => { state.boost = +e.target.value; applyBoost(); saveStore(); });
 $('#survey').addEventListener('change', (e) => setSurveyChoice(e.target.value));
 $('#seeing').value = state.seeing;
