@@ -71,6 +71,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Your processed images online at fovplanner.com, with title, target, dates, location, Bortle, telescope, camera, filters, integration, processing and notes
 - Plate-solved images show on the sky map wherever that part of the sky is in view, so the gallery doubles as a reference layer for faint and dark nebulae
 - Upload a JPG/PNG export or a FITS file; add its `.wcs` / `wcs.fits`, or let the planner plate-solve it on astrometry.net (1–5 minutes)
+- **Reference images** by other photographers (public-domain or openly licensed, e.g. NASA, ESA, ESO, CC BY) can be added with their credit, licence and source link, shown on the card and detail page; filter the gallery by My photos / Reference
 - Everyone can view; only the owner (with the upload key) can add, edit or delete. Setup: see `SETUP-GALLERY.md`
 
 ## My images

@@ -69,6 +69,11 @@
   .galfields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-top: 10px; }
   .galfields label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
   .galfields label.wide { grid-column: 1 / -1; }
+  #galForm:not(.ref) .refonly { display: none; }
+  .galitem .kind { position: absolute; top: 6px; left: 6px; font-size: 10.5px; padding: 1px 6px; border-radius: 6px; background: rgba(40,60,110,.85); color: #fff; }
+  .galfilter { display: flex; gap: 6px; margin-top: 8px; }
+  .galfilter button { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); cursor: pointer; }
+  .galfilter button[aria-pressed="true"] { color: var(--text); border-color: var(--accent); }
   .galfields input, .galfields select, .galfields textarea { width: 100%; font: inherit; font-size: 13px; }
   #galDlg { max-width: 640px; width: calc(100vw - 32px); }
   @media (max-width: 600px) { .galfields { grid-template-columns: 1fr; } }
@@ -377,6 +382,7 @@
     <section data-tab="gallery" class="card" id="galleryCard">
       <h2>Gallery <span class="row"><span class="note" id="galCount"></span><button class="icon" id="galAdd" hidden>+ Add image</button></span></h2>
       <label class="note"><input type="checkbox" id="galOverlay"> Show my photos on the sky map (also the “Photos” switch on the map)</label>
+      <div class="galfilter" id="galFilter"><button type="button" data-f="all" aria-pressed="true">All</button><button type="button" data-f="mine" aria-pressed="false">My photos</button><button type="button" data-f="ref" aria-pressed="false">Reference</button></div>
       <div id="galMsg" class="note"></div>
       <div id="galGrid" class="galgrid"></div>
       <div id="galDetail" hidden></div>
@@ -464,6 +470,11 @@
       <label class="note" style="display:block;margin-top:6px"><input type="checkbox" id="galSolve" checked> Plate-solve on astrometry.net if the image has no solution (1–5 min; fill in the target and rig below for a quick solve)</label>
     </div>
     <div class="galfields">
+      <label class="wide">Whose image <select id="gf_kind"><option value="mine">My own photo</option><option value="ref">Reference image by someone else (credit required)</option></select></label>
+      <label class="refonly">Image credit <input id="gf_credit" placeholder="e.g. ESO / Digitized Sky Survey 2"></label>
+      <label class="refonly">Licence <input id="gf_license" list="licList" placeholder="e.g. CC BY 4.0"></label>
+      <datalist id="licList"><option value="Public domain"><option value="CC0"><option value="CC BY 4.0"><option value="CC BY-SA 4.0"><option value="CC BY 3.0"><option value="Used with permission"></datalist>
+      <label class="refonly wide">Source link <input id="gf_source" type="url" placeholder="https://… page where the image and its licence are published"></label>
       <label>Title <input id="gf_title" placeholder="e.g. Pelican Nebula in HOO"></label>
       <label>Target <input id="gf_target" placeholder="e.g. IC 5070"></label>
       <label>Date(s) <input id="gf_date" placeholder="e.g. 12 &amp; 14 Oct 2026"></label>
@@ -2606,7 +2617,7 @@ function markLoaded() {
 }
 
 /* ---------- Gallery: your processed images online (Cloudflare R2 via worker.js), shown on the sky when plate-solved ---------- */
-var galItems = [], galAvailable = null, galPollT = null;
+var galItems = [], galAvailable = null, galPollT = null, galFilter = 'all';
 const GAL_API = '/api/gallery';
 const galKey = () => { try { return localStorage.getItem('mrp.gkey') || ''; } catch { return ''; } };
 // astrometry.net (and some other solvers) count JPG rows from the top; Aladin counts them from the bottom.
@@ -2650,10 +2661,11 @@ function renderGallery() {
   const solved = galItems.filter((it) => it.wcs).length;
   $('#galCount').textContent = galItems.length ? `${galItems.length} image${galItems.length > 1 ? 's' : ''} · ${solved} on the sky` : '';
   $('#galMsg').textContent = galItems.length ? '' : owner ? 'No images yet: use “+ Add image”.' : 'No images yet.';
-  $('#galGrid').innerHTML = galItems.map((it) => `<button type="button" class="galitem" data-gid="${esc(it.id)}">
-      <img loading="lazy" src="/g/${esc(it.id)}/thumb.jpg" alt="">
+  const shown = galItems.filter((it) => galFilter === 'all' || (galFilter === 'ref' ? it.kind === 'ref' : it.kind !== 'ref'));
+  $('#galGrid').innerHTML = shown.map((it) => `<button type="button" class="galitem" data-gid="${esc(it.id)}">
+      <img loading="lazy" src="/g/${esc(it.id)}/thumb.jpg" alt="">${it.kind === 'ref' ? '<span class="kind">Reference</span>' : ''}
       ${it.solving ? '<span class="badge">solving…</span>' : it.wcs ? '<span class="badge" title="Plate-solved: shown on the sky map">◎ on sky</span>' : ''}
-      <span class="cap">${esc(it.title || it.target || 'Untitled')}<small>${esc([it.target !== it.title ? it.target : '', it.date].filter(Boolean).join(' · '))}</small></span>
+      <span class="cap">${esc(it.title || it.target || 'Untitled')}<small>${esc(it.kind === 'ref' ? 'Image: ' + (it.credit || 'unknown') : [it.target !== it.title ? it.target : '', it.date].filter(Boolean).join(' · '))}</small></span>
     </button>`).join('');
   const open = $('#galDetail').dataset.gid;
   if (open && !$('#galDetail').hidden) showGalDetail(open);
@@ -2669,6 +2681,7 @@ function showGalDetail(id) {
       ${it.wcs ? '<button type="button" class="icon" data-gact="map">⌖ Show on map</button>' : ''}</div>
     <a href="/g/${esc(it.id)}/image.jpg" target="_blank" rel="noopener" title="Open full size"><img class="big" src="/g/${esc(it.id)}/image.jpg" alt="${esc(it.title || '')}"></a>
     <h3 style="margin:4px 0">${esc(it.title || it.target || 'Untitled')}</h3>
+    ${it.kind === 'ref' ? `<div class="note" style="margin-bottom:4px"><span class="tag warn">Reference image</span> Image: <b>${esc(it.credit || 'unknown')}</b>${it.license ? ` · ${esc(it.license)}` : ''}${it.source ? ` · <a href="${esc(it.source)}" target="_blank" rel="noopener noreferrer">source</a>` : ''}</div>` : ''}
     <dl>${row('Target', it.target)}${row('Date', it.date)}${row('Location', it.location)}${row('Bortle', it.bortle)}${row('Telescope', it.telescope)}${row('Camera', it.camera)}
       ${row('Filters', it.filters)}${row('Integration', it.integration)}${row('Processing', it.software)}${row('Notes', it.notes)}
       ${fp ? `<dt>Field</dt><dd>${fmtAngle(fp.radius * 2 / Math.SQRT2)} · ${fp.scale.toFixed(2)}″/px · centre ${sexa(fp.ra, true)} ${sexa(fp.dec, false)}</dd>` : `<dt>Sky position</dt><dd>${it.solving ? 'Plate solving on astrometry.net…' : 'Not plate-solved, so it is not shown on the sky map'}</dd>`}</dl>
@@ -2734,7 +2747,8 @@ function openGalDialog(it) {
     title: t ? (t.aliases?.[0] && !t.comet ? `${t.aliases[0]}` : normId(t.mainId || t.name)) : '',
     target: t ? normId(t.mainId || t.name) : '', location: state.site?.name || '', bortle: state.sky?.bortle ? String(state.sky.bortle) : '',
   };
-  for (const k of ['title', 'target', 'date', 'location', 'bortle', 'telescope', 'camera', 'filters', 'integration', 'software', 'notes']) $('#gf_' + k).value = def[k] || '';
+  for (const k of ['title', 'target', 'date', 'location', 'bortle', 'telescope', 'camera', 'filters', 'integration', 'software', 'notes', 'credit', 'license', 'source']) $('#gf_' + k).value = def[k] || '';
+  $('#gf_kind').value = it?.kind === 'ref' ? 'ref' : 'mine'; $('#galForm').classList.toggle('ref', $('#gf_kind').value === 'ref');
   if (!it && firstOn) { $('#gf_rig').value = firstOn.id; fillFromRig(); }
   $('#galFile').value = '';
   $('#galDlg').showModal();
@@ -2747,6 +2761,17 @@ function fillFromRig() {
   if (f && !$('#gf_filters').value) $('#gf_filters').value = f.name;
 }
 $('#gf_rig').addEventListener('change', fillFromRig);
+$('#gf_kind').addEventListener('change', () => {
+  const ref = $('#gf_kind').value === 'ref';
+  $('#galForm').classList.toggle('ref', ref);
+  if (ref && !galEditing) { $('#gf_rig').value = ''; for (const k of ['location', 'bortle', 'telescope', 'camera', 'filters']) $('#gf_' + k).value = ''; }
+});
+$('#galFilter').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-f]'); if (!b) return;
+  galFilter = b.dataset.f;
+  for (const x of document.querySelectorAll('#galFilter [data-f]')) x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+  $('#galDetail').hidden = true; $('#galGrid').hidden = false; renderGallery();
+});
 $('#galAdd').addEventListener('click', () => openGalDialog(null));
 $('#galCancel').addEventListener('click', () => $('#galDlg').close());
 // Turn the chosen files into a ≤4096 px JPG, a thumbnail, and a WCS that matches the JPG (when the files carry one)
@@ -2816,7 +2841,10 @@ function scheduleGalPoll() {
 $('#galForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const meta = {};
-  for (const k of ['title', 'target', 'date', 'location', 'bortle', 'telescope', 'camera', 'filters', 'integration', 'software', 'notes']) meta[k] = $('#gf_' + k).value.trim();
+  for (const k of ['title', 'target', 'date', 'location', 'bortle', 'telescope', 'camera', 'filters', 'integration', 'software', 'notes', 'credit', 'license', 'source']) meta[k] = $('#gf_' + k).value.trim();
+  meta.kind = $('#gf_kind').value;
+  if (meta.kind === 'ref' && (!meta.credit || !meta.license)) { $('#galDlgMsg').textContent = 'A reference image needs its credit and licence.'; return; }
+  if (meta.source && !/^https?:\/\//i.test(meta.source)) { $('#galDlgMsg').textContent = 'The source link should start with https://'; return; }
   const r = state.rigs.find((x) => x.id === $('#gf_rig').value);
   if (r) { const s = scopeById(r.scope), c = camById(r.cam); meta.rig = `${s?.name || ''} + ${c?.name || ''}`; }
   const msg = (t) => { $('#galDlgMsg').textContent = t; };
