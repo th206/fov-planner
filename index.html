@@ -2607,10 +2607,14 @@ function markLoaded() {
 var galItems = [], galAvailable = null, galPollT = null;
 const GAL_API = '/api/gallery';
 const galKey = () => { try { return localStorage.getItem('mrp.gkey') || ''; } catch { return ''; } };
+// astrometry.net (and some other solvers) count JPG rows from the top; Aladin counts them from the bottom.
+// An un-mirrored camera image has a positive CD determinant only in the top-down convention, so flip those
+// (owner can override with "flip" for images that were mirrored in processing).
+const galWcs = (it) => { const w = it.wcs; const det = w.cd[0] * w.cd[3] - w.cd[1] * w.cd[2]; return (det > 0) !== !!it.flip ? flipWcs(w) : w; };
 function galleryRecs() {
   if (!Array.isArray(galItems) || !state.galOverlay) return [];
-  return galItems.filter((it) => it.wcs && it.wcs.w).map((it) => ({ id: 'gal-' + it.id, name: it.title || it.target || 'Gallery image',
-    url: `/g/${it.id}/image.jpg`, fmt: 'jpeg', wcs: it.wcs, flip: false, on: true, opacity: 0.85, ...imgFootprint(it.wcs) }));
+  return galItems.filter((it) => it.wcs && it.wcs.w).map((it) => ({ id: 'gal-' + it.id + (it.flip ? '-f' : ''), name: it.title || it.target || 'Gallery image',
+    url: `/g/${it.id}/image.jpg`, fmt: 'jpeg', wcs: galWcs(it), flip: false, on: true, opacity: 0.85, ...imgFootprint(galWcs(it)) }));
 }
 async function galFetch(path = '', opts = {}) {
   const headers = { ...(opts.headers || {}) };
@@ -2668,6 +2672,7 @@ function showGalDetail(id) {
       ${fp ? `<dt>Field</dt><dd>${fmtAngle(fp.radius * 2 / Math.SQRT2)} · ${fp.scale.toFixed(2)}″/px · centre ${sexa(fp.ra, true)} ${sexa(fp.dec, false)}</dd>` : `<dt>Sky position</dt><dd>${it.solving ? 'Plate solving on astrometry.net…' : 'Not plate-solved, so it is not shown on the sky map'}</dd>`}</dl>
     ${owner ? `<div class="row" style="margin-top:8px"><button type="button" class="icon" data-gact="edit">Edit details</button>
       ${!it.wcs && !it.solving ? '<button type="button" class="icon" data-gact="solve">Plate-solve</button>' : ''}
+      ${it.wcs ? `<button type="button" class="icon ghost" data-gact="flip" title="Only if the overlay is mirrored against the sky (image flipped during processing)">Mirror overlay${it.flip ? ' ✓' : ''}</button>` : ''}
       <button type="button" class="icon ghost" data-gact="del">Delete</button></div>` : ''}`;
 }
 $('#galGrid').addEventListener('click', (e) => { const b = e.target.closest('[data-gid]'); if (b) { showGalDetail(b.dataset.gid); track('gallery/open'); } });
@@ -2683,6 +2688,10 @@ $('#galDetail').addEventListener('click', async (e) => {
     drawFrames(); updateHud(); refreshImageLayers(true); track('gallery/map');
   } else if (act === 'edit') openGalDialog(it);
   else if (act === 'solve') { await startSolve(it, null); }
+  else if (act === 'flip') {
+    try { await galFetch('/' + id, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ flip: !it.flip }) }); await loadGallery(); showGalDetail(id); }
+    catch (err) { $('#galMsg').textContent = err.message; }
+  }
   else if (act === 'del') {
     if (!confirm(`Delete “${it.title || it.target || 'this image'}” from the gallery? This cannot be undone.`)) return;
     try { await galFetch('/' + id, { method: 'DELETE' }); $('#galDetail').hidden = true; $('#galGrid').hidden = false; await loadGallery(); }
