@@ -1,0 +1,8 @@
+{
+  // fovplanner.com: static site + gallery API (see worker.js)
+  "name": "fovplanner",
+  "main": "worker.js",
+  "compatibility_date": "2025-06-01",
+  "assets": { "directory": ".", "binding": "ASSETS" },
+  "r2_buckets": [{ "binding": "GALLERY", "bucket_name": "fovplanner-gallery" }]
+}

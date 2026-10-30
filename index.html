@@ -55,6 +55,23 @@
   .rig { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 8px; padding: 9px; background: var(--panel-2); display: flex; flex-direction: column; gap: 7px; }
   .rig + .rig { margin-top: 8px; }
   .rig.off { opacity: .55; }
+  .galgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; }
+  .galitem { position: relative; padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel-2); cursor: pointer; text-align: left; color: var(--text); font: inherit; }
+  .galitem:hover, .galitem:focus { border-color: var(--accent); outline: none; }
+  .galitem img { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; display: block; background: #000; }
+  .galitem .cap { display: block; padding: 5px 7px; font-size: 12px; line-height: 1.35; }
+  .galitem .cap small { display: block; color: var(--muted); font-size: 11px; }
+  .galitem .badge { position: absolute; top: 6px; right: 6px; font-size: 10.5px; padding: 1px 6px; border-radius: 6px; background: rgba(0,0,0,.65); color: #fff; }
+  #galDetail img.big { width: 100%; border-radius: 8px; display: block; background: #000; margin: 8px 0; }
+  #galDetail dl { display: grid; grid-template-columns: 100px 1fr; gap: 3px 10px; font-size: 12.5px; margin: 6px 0; }
+  #galDetail dt { color: var(--muted); } #galDetail dd { margin: 0; white-space: pre-wrap; }
+  .galowner { margin-top: 12px; } .galowner a { color: var(--muted); }
+  .galfields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-top: 10px; }
+  .galfields label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  .galfields label.wide { grid-column: 1 / -1; }
+  .galfields input, .galfields select, .galfields textarea { width: 100%; font: inherit; font-size: 13px; }
+  #galDlg { max-width: 640px; width: calc(100vw - 32px); }
+  @media (max-width: 600px) { .galfields { grid-template-columns: 1fr; } }
   #verdict .vhead { margin-bottom: 6px; color: var(--text); }
   #verdict .rigdot { display: inline-block; margin-right: 6px; vertical-align: 1px; }
   #verdict .vline { padding: 5px 0; border-top: 1px solid var(--line); line-height: 1.6; color: var(--text); font-size: 13px; }
@@ -185,8 +202,9 @@
   #app[data-tab="frame"] section[data-tab]:not([data-tab="frame"]),
   #app[data-tab="tonight"] section[data-tab]:not([data-tab="tonight"]),
   #app[data-tab="sky"] section[data-tab]:not([data-tab="sky"]),
-  #app[data-tab="gear"] section[data-tab]:not([data-tab="gear"]) { display: none; }
-  @media (min-width: 861px) { #app[data-tab="tonight"], #app[data-tab="sky"] { grid-template-columns: 560px 1fr; } }
+  #app[data-tab="gear"] section[data-tab]:not([data-tab="gear"]),
+  #app[data-tab="gallery"] section[data-tab]:not([data-tab="gallery"]) { display: none; }
+  @media (min-width: 861px) { #app[data-tab="tonight"], #app[data-tab="sky"], #app[data-tab="gallery"] { grid-template-columns: 560px 1fr; } }
   details.info > summary { font-size: 12px; color: var(--muted); cursor: pointer; margin-top: 8px; list-style: none; }
   details.info > summary::-webkit-details-marker { display: none; }
   details.info > summary:hover { color: var(--text); }
@@ -227,6 +245,7 @@
       <button type="button" role="tab" data-go="frame"><span class="ti">⌖</span><span>Frame</span></button>
       <button type="button" role="tab" data-go="tonight"><span class="ti">★</span><span>Tonight</span></button>
       <button type="button" role="tab" data-go="sky"><span class="ti">☁</span><span>Sky</span></button>
+      <button type="button" role="tab" data-go="gallery"><span class="ti">▦</span><span>Gallery</span></button>
       <button type="button" role="tab" data-go="gear"><span class="ti">⚙</span><span>Gear</span></button>
     </nav>
 
@@ -354,6 +373,15 @@
       <div class="note" id="wxLinks" style="margin-top:8px"></div>
     </section>
 
+    <section data-tab="gallery" class="card" id="galleryCard">
+      <h2>Gallery <span class="row"><span class="note" id="galCount"></span><button class="icon" id="galAdd" hidden>+ Add image</button></span></h2>
+      <label class="note"><input type="checkbox" id="galOverlay"> Show plate-solved gallery images on the sky map</label>
+      <div id="galMsg" class="note"></div>
+      <div id="galGrid" class="galgrid"></div>
+      <div id="galDetail" hidden></div>
+      <div class="note galowner"><a href="#" id="galOwner">Owner: unlock uploads</a></div>
+    </section>
+
     <section data-tab="gear" class="card">
       <h2>My images <span class="row"><button class="icon" id="imgAddBtn" title="Add plate-solved images">+ Add</button></span></h2>
       <input type="file" id="imgFile" multiple hidden accept=".jpg,.jpeg,.png,.fits,.fit,.fts,.wcs,.ini,.txt">
@@ -425,6 +453,33 @@
   </main>
 </div>
 
+<dialog id="galDlg">
+  <form id="galForm" method="dialog">
+    <h2 style="margin-top:0" id="galDlgTitle">Add to gallery</h2>
+    <div id="galFileRow">
+      <label class="note">Image: JPG or PNG export (plus its <code>.wcs</code> / <code>wcs.fits</code> if you have one), or a FITS file<br>
+        <input type="file" id="galFile" multiple accept=".jpg,.jpeg,.png,.fit,.fits,.fts,.wcs,.ini,.txt"></label>
+      <label class="note" style="display:block;margin-top:6px"><input type="checkbox" id="galSolve" checked> Plate-solve on astrometry.net if the image has no solution (1–5 min; fill in the target and rig below for a quick solve)</label>
+    </div>
+    <div class="galfields">
+      <label>Title <input id="gf_title" placeholder="e.g. Pelican Nebula in HOO"></label>
+      <label>Target <input id="gf_target" placeholder="e.g. IC 5070"></label>
+      <label>Date(s) <input id="gf_date" placeholder="e.g. 12 &amp; 14 Oct 2026"></label>
+      <label>Location <input id="gf_location"></label>
+      <label>Bortle <input id="gf_bortle"></label>
+      <label>Rig <select id="gf_rig"></select></label>
+      <label>Telescope <input id="gf_telescope"></label>
+      <label>Camera <input id="gf_camera"></label>
+      <label>Filters <input id="gf_filters" placeholder="e.g. Hα 7nm, OIII 7nm"></label>
+      <label>Integration <input id="gf_integration" placeholder="e.g. Hα 40×300 s, OIII 30×300 s (5.8 h)"></label>
+      <label>Processing <input id="gf_software" placeholder="e.g. PixInsight, GraXpert"></label>
+      <label class="wide">Notes <textarea id="gf_notes" rows="3"></textarea></label>
+    </div>
+    <div class="note" id="galDlgMsg"></div>
+    <div class="dlgbtns"><span></span><span class="row"><button type="button" id="galCancel">Cancel</button><button type="submit" class="primary" id="galSave">Upload</button></span></div>
+  </form>
+</dialog>
+
 <dialog id="eqDlg">
   <h2 style="margin-top:0">Equipment</h2>
   <h3>Telescopes / lenses</h3>
@@ -489,7 +544,7 @@ function saveStore() {
   try {
     localStorage.setItem(KEY, JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust,
+      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, galOverlay: state.galOverlay,
     }));
   } catch { /* storage unavailable */ }
 }
@@ -506,6 +561,7 @@ const state = {
   useFcSeeing: saved.useFcSeeing ?? true,
   wxModel: saved.wxModel || 'best_match',
   dust: saved.dust || 'auto',
+  galOverlay: saved.galOverlay ?? true,
   windBias: null,
   filters: saved.filters || [],
   boost: saved.boost ?? 30,
@@ -1006,11 +1062,13 @@ function inView(rec) {
 }
 function refreshImageLayers(force) {
   if (!aladin) return;
-  for (const rec of imgCache) {
+  const recs = [...imgCache, ...galleryRecs()];
+  for (const [id, cur] of imgShown) if (!recs.some((r) => r.id === id)) { aladin.removeImageLayer(cur.layer); imgShown.delete(id); }
+  for (const rec of recs) {
     const want = rec.on && inView(rec), cur = imgShown.get(rec.id);
     if (want && (!cur || cur.flip !== rec.flip || cur.rot !== (rec.rot || 0))) {
       if (cur) aladin.removeImageLayer(cur.layer);
-      if (!imgUrls.has(rec.id)) imgUrls.set(rec.id, URL.createObjectURL(rec.blob));
+      if (!imgUrls.has(rec.id)) imgUrls.set(rec.id, rec.url || URL.createObjectURL(rec.blob));
       const opts = { name: rec.name, imgFormat: rec.fmt, minCut: 0, maxCut: 255, successCallback: () => { try { img.setCuts(0, 255); } catch {} }, errorCallback: () => { $('#imgMsg').textContent = `Could not display ${rec.name}.`; } };
       let ew = rec.approx ? rotateWcs(rec.wcs, rec.rot || 0) : rec.wcs;
       if (rec.flip) ew = flipWcs(ew);
@@ -2545,8 +2603,232 @@ function markLoaded() {
   $('#visName').textContent = t ? '· ' + (t.comet ? t.name : normId(t.mainId || t.name)) : '';
 }
 
+/* ---------- Gallery: your processed images online (Cloudflare R2 via worker.js), shown on the sky when plate-solved ---------- */
+var galItems = [], galAvailable = null, galPollT = null;
+const GAL_API = '/api/gallery';
+const galKey = () => { try { return localStorage.getItem('mrp.gkey') || ''; } catch { return ''; } };
+function galleryRecs() {
+  if (!Array.isArray(galItems) || !state.galOverlay) return [];
+  return galItems.filter((it) => it.wcs && it.wcs.w).map((it) => ({ id: 'gal-' + it.id, name: it.title || it.target || 'Gallery image',
+    url: `/g/${it.id}/image.jpg`, fmt: 'jpeg', wcs: it.wcs, flip: false, on: true, opacity: 0.85, ...imgFootprint(it.wcs) }));
+}
+async function galFetch(path = '', opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (galKey()) headers['x-upload-key'] = galKey();
+  const r = await fetch(GAL_API + path, { ...opts, headers, cache: 'no-store' });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || j == null) throw new Error(j?.error || `Gallery error ${r.status}`);
+  return j;
+}
+async function loadGallery() {
+  try {
+    const items = await galFetch('');
+    if (!Array.isArray(items)) throw new Error('bad list');
+    galItems = items; galAvailable = true;
+  } catch (e) {
+    galItems = []; galAvailable = false;
+  }
+  renderGallery(); refreshImageLayers(true);
+  if (galKey() && galItems.some((it) => it.solving)) scheduleGalPoll();
+}
+function renderGallery() {
+  const owner = !!galKey();
+  $('#galAdd').hidden = !(owner && galAvailable);
+  $('#galOwner').textContent = owner ? 'Owner: lock uploads on this device' : 'Owner: unlock uploads';
+  $('#galOverlay').checked = state.galOverlay;
+  if (galAvailable === false) {
+    $('#galMsg').textContent = /fovplanner\.com$/i.test(location.hostname)
+      ? 'The gallery could not be loaded right now. Try again later.' : 'The gallery lives at fovplanner.com.';
+    $('#galGrid').innerHTML = ''; $('#galCount').textContent = ''; return;
+  }
+  const solved = galItems.filter((it) => it.wcs).length;
+  $('#galCount').textContent = galItems.length ? `${galItems.length} image${galItems.length > 1 ? 's' : ''} · ${solved} on the sky` : '';
+  $('#galMsg').textContent = galItems.length ? '' : owner ? 'No images yet: use “+ Add image”.' : 'No images yet.';
+  $('#galGrid').innerHTML = galItems.map((it) => `<button type="button" class="galitem" data-gid="${esc(it.id)}">
+      <img loading="lazy" src="/g/${esc(it.id)}/thumb.jpg" alt="">
+      ${it.solving ? '<span class="badge">solving…</span>' : it.wcs ? '<span class="badge" title="Plate-solved: shown on the sky map">◎ on sky</span>' : ''}
+      <span class="cap">${esc(it.title || it.target || 'Untitled')}<small>${esc([it.target !== it.title ? it.target : '', it.date].filter(Boolean).join(' · '))}</small></span>
+    </button>`).join('');
+  const open = $('#galDetail').dataset.gid;
+  if (open && !$('#galDetail').hidden) showGalDetail(open);
+}
+function showGalDetail(id) {
+  const it = galItems.find((x) => x.id === id); const box = $('#galDetail');
+  if (!it) { box.hidden = true; $('#galGrid').hidden = false; return; }
+  const owner = !!galKey();
+  const row = (k, v) => (v ? `<dt>${k}</dt><dd>${esc(v)}</dd>` : '');
+  const fp = it.wcs ? imgFootprint(it.wcs) : null;
+  box.dataset.gid = id; box.hidden = false; $('#galGrid').hidden = true;
+  box.innerHTML = `<div class="row" style="justify-content:space-between"><button type="button" class="icon ghost" data-gact="back">← All images</button>
+      ${it.wcs ? '<button type="button" class="icon" data-gact="map">⌖ Show on map</button>' : ''}</div>
+    <a href="/g/${esc(it.id)}/image.jpg" target="_blank" rel="noopener" title="Open full size"><img class="big" src="/g/${esc(it.id)}/image.jpg" alt="${esc(it.title || '')}"></a>
+    <h3 style="margin:4px 0">${esc(it.title || it.target || 'Untitled')}</h3>
+    <dl>${row('Target', it.target)}${row('Date', it.date)}${row('Location', it.location)}${row('Bortle', it.bortle)}${row('Telescope', it.telescope)}${row('Camera', it.camera)}
+      ${row('Filters', it.filters)}${row('Integration', it.integration)}${row('Processing', it.software)}${row('Notes', it.notes)}
+      ${fp ? `<dt>Field</dt><dd>${fmtAngle(fp.radius * 2 / Math.SQRT2)} · ${fp.scale.toFixed(2)}″/px · centre ${sexa(fp.ra, true)} ${sexa(fp.dec, false)}</dd>` : `<dt>Sky position</dt><dd>${it.solving ? 'Plate solving on astrometry.net…' : 'Not plate-solved, so it is not shown on the sky map'}</dd>`}</dl>
+    ${owner ? `<div class="row" style="margin-top:8px"><button type="button" class="icon" data-gact="edit">Edit details</button>
+      ${!it.wcs && !it.solving ? '<button type="button" class="icon" data-gact="solve">Plate-solve</button>' : ''}
+      <button type="button" class="icon ghost" data-gact="del">Delete</button></div>` : ''}`;
+}
+$('#galGrid').addEventListener('click', (e) => { const b = e.target.closest('[data-gid]'); if (b) { showGalDetail(b.dataset.gid); track('gallery/open'); } });
+$('#galDetail').addEventListener('click', async (e) => {
+  const act = e.target.closest('[data-gact]')?.dataset.gact; if (!act) return;
+  const id = $('#galDetail').dataset.gid, it = galItems.find((x) => x.id === id); if (!it) return;
+  if (act === 'back') { $('#galDetail').hidden = true; $('#galGrid').hidden = false; }
+  else if (act === 'map') {
+    const fp = imgFootprint(it.wcs);
+    state.galOverlay = true; saveStore();
+    setTab('frame');
+    state.center = [fp.ra, fp.dec]; aladin?.gotoRaDec(fp.ra, fp.dec); aladin?.setFoV(Math.max(0.2, fp.radius * 2.4));
+    drawFrames(); updateHud(); refreshImageLayers(true); track('gallery/map');
+  } else if (act === 'edit') openGalDialog(it);
+  else if (act === 'solve') { await startSolve(it, null); }
+  else if (act === 'del') {
+    if (!confirm(`Delete “${it.title || it.target || 'this image'}” from the gallery? This cannot be undone.`)) return;
+    try { await galFetch('/' + id, { method: 'DELETE' }); $('#galDetail').hidden = true; $('#galGrid').hidden = false; await loadGallery(); }
+    catch (err) { $('#galMsg').textContent = err.message; }
+  }
+});
+$('#galOverlay').addEventListener('change', (e) => { state.galOverlay = e.target.checked; saveStore(); refreshImageLayers(true); });
+$('#galOwner').addEventListener('click', async (e) => {
+  e.preventDefault();
+  if (galKey()) { try { localStorage.removeItem('mrp.gkey'); } catch {} renderGallery(); return; }
+  const k = (prompt('Gallery upload key (the UPLOAD_KEY you set in Cloudflare):') || '').trim(); if (!k) return;
+  try {
+    const r = await fetch(GAL_API + '/auth', { headers: { 'x-upload-key': k }, cache: 'no-store' });
+    if (!r.ok) throw new Error();
+    try { localStorage.setItem('mrp.gkey', k); } catch {}
+    $('#galMsg').textContent = 'Uploads unlocked on this device.';
+  } catch { $('#galMsg').textContent = 'That key was not accepted.'; }
+  renderGallery();
+});
+
+// ---- add / edit dialog ----
+let galEditing = null;
+function openGalDialog(it) {
+  galEditing = it || null;
+  $('#galDlgTitle').textContent = it ? 'Edit details' : 'Add to gallery';
+  $('#galFileRow').hidden = !!it; $('#galSave').textContent = it ? 'Save' : 'Upload'; $('#galDlgMsg').textContent = '';
+  const rigs = state.rigs.map((r) => ({ r, s: scopeById(r.scope), c: camById(r.cam) })).filter((x) => x.s && x.c);
+  $('#gf_rig').innerHTML = '<option value="">— not from my rigs —</option>' + rigs.map(({ r, s, c }) => `<option value="${r.id}">${esc(s.name)} + ${esc(c.name)}</option>`).join('');
+  const t = state.target, firstOn = state.rigs.find((r) => r.on);
+  const def = it || {
+    title: t ? (t.aliases?.[0] && !t.comet ? `${t.aliases[0]}` : normId(t.mainId || t.name)) : '',
+    target: t ? normId(t.mainId || t.name) : '', location: state.site?.name || '', bortle: state.sky?.bortle ? String(state.sky.bortle) : '',
+  };
+  for (const k of ['title', 'target', 'date', 'location', 'bortle', 'telescope', 'camera', 'filters', 'integration', 'software', 'notes']) $('#gf_' + k).value = def[k] || '';
+  if (!it && firstOn) { $('#gf_rig').value = firstOn.id; fillFromRig(); }
+  $('#galFile').value = '';
+  $('#galDlg').showModal();
+}
+function fillFromRig() {
+  const r = state.rigs.find((x) => x.id === $('#gf_rig').value); if (!r) return;
+  const s = scopeById(r.scope), c = camById(r.cam), f = filterById(r.filter);
+  $('#gf_telescope').value = s ? s.name + (r.factor !== 1 ? ` ×${r.factor}` : '') : '';
+  $('#gf_camera').value = c ? c.name : '';
+  if (f && !$('#gf_filters').value) $('#gf_filters').value = f.name;
+}
+$('#gf_rig').addEventListener('change', fillFromRig);
+$('#galAdd').addEventListener('click', () => openGalDialog(null));
+$('#galCancel').addEventListener('click', () => $('#galDlg').close());
+// Turn the chosen files into a ≤4096 px JPG, a thumbnail, and a WCS that matches the JPG (when the files carry one)
+async function prepareGalleryImage(files) {
+  files = [...files];
+  const pic = files.find(isPic), fit = files.find(isFits);
+  const sideHdrs = [];
+  for (const f of files.filter((f) => isWcsText(f) || (isFits(f) && f !== fit))) sideHdrs.push(parseFitsHeader(await f.slice(0, 2880 * 40).arrayBuffer()));
+  let canvas, wcs = null, factor = 1;
+  if (pic) {
+    const bmp = await loadBitmap(pic);
+    const hdrs = [...sideHdrs];
+    if (fit) hdrs.push(parseFitsHeader(await fit.slice(0, 2880 * 40).arrayBuffer()));   // astrometry.net wcs.fits picked with the JPG
+    const w0 = hdrs.map(linearWcs).find(Boolean);
+    factor = Math.min(1, 4096 / Math.max(bmp.width, bmp.height));
+    canvas = document.createElement('canvas'); canvas.width = Math.round(bmp.width * factor); canvas.height = Math.round(bmp.height * factor);
+    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    if (w0) { let w = { ...w0, w: w0.w || bmp.width, h: w0.h || bmp.height }; if (w.w !== canvas.width) w = scaleWcs(w, canvas.width / w.w); wcs = w; }
+  } else if (fit) {
+    const h = parseFitsHeader(await fit.slice(0, 2880 * 40).arrayBuffer());
+    if (!((h.NAXIS || 0) >= 2 && (h.NAXIS1 || 0) > 16)) throw new Error('That FITS file holds no image. Pick the image (JPG/PNG or FITS).');
+    const d = await fitsToCanvas(fit, h);
+    canvas = d.canvas; factor = canvas.width / d.W;
+    const w0 = linearWcs(h) || sideHdrs.map(linearWcs).find(Boolean);
+    if (w0) { let w = { ...w0, w: d.W, h: d.H }; if (d.topDown) w = flipWcs(w); if (d.step > 1) w = scaleWcs(w, canvas.width / w.w); wcs = w; }
+  } else if (files.some((f) => /\.tiff?$/i.test(f.name))) throw new Error('TIFF is not supported yet: export a JPG (quality 90+) from your processing software.');
+  else throw new Error('Choose a JPG, PNG or FITS image.');
+  const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.92));
+  const tf = Math.min(1, 480 / Math.max(canvas.width, canvas.height));
+  const tc = document.createElement('canvas'); tc.width = Math.round(canvas.width * tf); tc.height = Math.round(canvas.height * tf);
+  tc.getContext('2d').drawImage(canvas, 0, 0, tc.width, tc.height);
+  const thumb = await new Promise((r) => tc.toBlob(r, 'image/jpeg', 0.85));
+  return { blob, thumb, wcs, w: canvas.width, h: canvas.height, factor };
+}
+async function startSolve(it, prep) {
+  const hints = {};
+  // position: from the target name (or what is loaded on the map), scale: from the rig and how much the JPG was shrunk
+  try {
+    const name = (it.target || '').trim();
+    const t = state.target && name && catKey(name) === catKey(state.target.mainId || state.target.name || '') ? state.target : name ? await resolveName(name) : null;
+    if (t) Object.assign(hints, { ra: t.ra, dec: t.dec, radius: 5 });
+  } catch { /* solve blind */ }
+  const r = state.rigs.find((x) => x.id === $('#gf_rig').value) || null, g = r && rigGeom(r);
+  if (g && prep) { const sc = g.scale / prep.factor; Object.assign(hints, { scale_lower: sc * 0.75, scale_upper: sc * 1.33 }); }
+  try {
+    await galFetch(`/${it.id}/solve`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(hints) });
+    it.solving = true; renderGallery(); scheduleGalPoll();
+    $('#galMsg').textContent = 'Plate solving on astrometry.net — usually 1–5 minutes. You can keep using the planner.';
+  } catch (err) { $('#galMsg').textContent = 'Plate solving could not start: ' + err.message; }
+}
+function scheduleGalPoll() {
+  clearTimeout(galPollT);
+  galPollT = setTimeout(async () => {
+    const pending = galItems.filter((it) => it.solving);
+    let changed = false;
+    for (const it of pending) {
+      try {
+        const r = await galFetch(`/${it.id}/solve`);
+        if (r.status === 'solved') { changed = true; $('#galMsg').textContent = `“${it.title || it.target}” is plate-solved and now shows on the sky map.`; }
+        else if (r.status === 'failed') { changed = true; $('#galMsg').textContent = `astrometry.net could not solve “${it.title || it.target}”. Try again with the target and rig filled in, or upload a .wcs file.`; }
+      } catch { /* try again next round */ }
+    }
+    if (changed) await loadGallery();
+    else if (pending.length) scheduleGalPoll();
+  }, 15000);
+}
+$('#galForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const meta = {};
+  for (const k of ['title', 'target', 'date', 'location', 'bortle', 'telescope', 'camera', 'filters', 'integration', 'software', 'notes']) meta[k] = $('#gf_' + k).value.trim();
+  const r = state.rigs.find((x) => x.id === $('#gf_rig').value);
+  if (r) { const s = scopeById(r.scope), c = camById(r.cam); meta.rig = `${s?.name || ''} + ${c?.name || ''}`; }
+  const msg = (t) => { $('#galDlgMsg').textContent = t; };
+  $('#galSave').disabled = true;
+  try {
+    if (galEditing) {
+      await galFetch('/' + galEditing.id, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(meta) });
+      $('#galDlg').close(); await loadGallery(); showGalDetail(galEditing.id); return;
+    }
+    const files = $('#galFile').files;
+    if (!files?.length) { msg('Choose an image first.'); return; }
+    msg('Preparing the image…');
+    const prep = await prepareGalleryImage(files);
+    if (prep.wcs) Object.assign(meta, { wcs: prep.wcs });
+    Object.assign(meta, { w: prep.w, h: prep.h });
+    const fd = new FormData();
+    fd.append('meta', JSON.stringify(meta)); fd.append('image', prep.blob, 'image.jpg'); fd.append('thumb', prep.thumb, 'thumb.jpg');
+    msg(`Uploading ${(prep.blob.size / 1e6).toFixed(1)} MB…`);
+    const it = await galFetch('', { method: 'POST', body: fd });
+    track('gallery/upload');
+    $('#galDlg').close();
+    await loadGallery();
+    if (!prep.wcs && $('#galSolve').checked) await startSolve(it, prep);
+    else $('#galMsg').textContent = prep.wcs ? 'Uploaded with its plate solution: it shows on the sky map.' : 'Uploaded. It is not plate-solved, so it does not show on the sky map yet.';
+  } catch (err) { msg(err.message || 'Upload failed.'); }
+  finally { $('#galSave').disabled = false; }
+});
+
 /* ---------- Tabs ---------- */
-const TABS = ['frame', 'tonight', 'sky', 'gear'];
+const TABS = ['frame', 'tonight', 'sky', 'gallery', 'gear'];
 function setTab(name, quiet) {
   if (!TABS.includes(name)) name = 'frame';
   const app = $('#app'), was = app.dataset.tab;
@@ -2638,7 +2920,7 @@ $('#addCam').addEventListener('click', () => $('#camTbl tbody').insertAdjacentHT
 $('#eqDlg').addEventListener('click', (e) => { if (e.target.matches('[data-del]')) e.target.closest('tr').remove(); });
 
 /* ---------- Backup: export / import ---------- */
-const BACKUP_KEYS = ['scopes', 'cams', 'filters', 'rigs', 'survey', 'boost', 'tn', 'seeing', 'useFcSeeing', 'defaultSite', 'follow', 'wxModel'];
+const BACKUP_KEYS = ['scopes', 'cams', 'filters', 'rigs', 'survey', 'boost', 'tn', 'seeing', 'useFcSeeing', 'defaultSite', 'follow', 'wxModel', 'dust', 'galOverlay'];
 const blobToDataUrl = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); });
 const dataUrlToBlob = async (u) => (await fetch(u)).blob();
 function downloadFile(name, text) {
@@ -2722,6 +3004,7 @@ renderMoon();
 updateSky();
 loadExtCatalogs();
 loadComets();
+loadGallery();
 // target details: open by default on wide screens, remembered after that
 { let open = null; try { open = localStorage.getItem('mrp.tgtOpen'); } catch {}
   $('#tgtDetails').open = open != null ? open === '1' : window.innerWidth > 860;

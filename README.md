@@ -64,6 +64,14 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Surveys: **NSNS narrowband** ([OIII]·Hα·[SII] color, Hα, [OIII]) and **IPHAS Hα** to see faint nebulae and supernova remnants, plus DSS2, Pan-STARRS, 2MASS, Mellinger and wide-field Hα
 - **Auto** mode: narrowband for nebulae, DSS color for galaxies and clusters
 - "Faint detail" slider to stretch the survey and bring out faint nebulosity
+- **Dust** overlay (IRAS 100 µm far-infrared): dark nebulae are dust clouds, so they glow here and show their real shape; turns on by itself for dark nebulae (LDN, Barnard)
+
+## Gallery
+
+- Your processed images online at fovplanner.com, with title, target, dates, location, Bortle, telescope, camera, filters, integration, processing and notes
+- Plate-solved images show on the sky map wherever that part of the sky is in view, so the gallery doubles as a reference layer for faint and dark nebulae
+- Upload a JPG/PNG export or a FITS file; add its `.wcs` / `wcs.fits`, or let the planner plate-solve it on astrometry.net (1–5 minutes)
+- Everyone can view; only the owner (with the upload key) can add, edit or delete. Setup: see `SETUP-GALLERY.md`
 
 ## My images
 
@@ -87,7 +95,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Comet orbits: [Minor Planet Center](https://www.minorplanetcenter.net/)
 - Weather and air quality: [Open-Meteo](https://open-meteo.com/); airport observations: [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/) (Iowa State University); astronomical forecast chart: [7Timer!](https://www.7timer.info/)
 
-Single file (`index.html`), no build step. Hosted on Cloudflare Pages.
+The page is a single file (`index.html`), no build step. Hosted on Cloudflare Workers; `worker.js` adds the gallery API (images in Cloudflare R2).
 
 ## Notes
 
