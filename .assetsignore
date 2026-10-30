@@ -10,3 +10,6 @@ wrangler.jsonc
 wrangler.toml
 *.md
 .assetsignore
+worker.js
+node_modules/**
+.dev.vars
