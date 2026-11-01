@@ -1843,7 +1843,7 @@ function drawAltChart() {
 /* ---------- Weather & seeing (Open-Meteo) ---------- */
 const WX_HOURLY = ['cloud_cover', 'cloud_cover_low', 'cloud_cover_mid', 'cloud_cover_high', 'relative_humidity_2m', 'temperature_2m',
   'dew_point_2m', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m', 'surface_pressure',
-  'visibility', 'precipitation', 'precipitation_probability', 'cape', 'wind_speed_80m', 'wind_speed_120m',
+  'visibility', 'precipitation', 'precipitation_probability', 'cape', 'convective_inhibition', 'weather_code', 'wind_speed_80m', 'wind_speed_120m',
   ...[1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200, 150, 100].flatMap((p) =>
     [`temperature_${p}hPa`, `wind_speed_${p}hPa`, `wind_direction_${p}hPa`, `geopotential_height_${p}hPa`])].join(',');
 let wxSeq = 0, wxTimer, wxLast = null, wxInfoOpen = false;
@@ -2190,6 +2190,16 @@ function renderWeather(w, a, t0, t1, c) {
   const jetAt = (ms) => { const v = [300, 250, 200].map((p) => val(`wind_speed_${p}hPa`, ms)).filter((x) => x != null); return v.length ? Math.max(...v) / 3.6 : undefined; };
   const coolAt = (ms) => { const a1 = val('temperature_2m', ms), a0 = val('temperature_2m', ms - 3600e3); return a1 == null || a0 == null ? undefined : a0 - a1; };
   const seeCls = (v) => grade(v, 1.5, 2.5);
+  // Instability (CAPE) alone is common over hot, dry desert nights and means nothing without moisture and a trigger:
+  // flag storms only when the model forecasts one (WMO codes 95–99), or when unstable air meets real rain or cloud chances.
+  const stormAt = (ms) => {
+    const code = val('weather_code', ms), c = val('cape', ms), ci = val('convective_inhibition', ms), rp = val('precipitation_probability', ms), cl = val('cloud_cover', ms);
+    if (code == null && c == null) return undefined;
+    if (code >= 95) return 2;
+    const capped = ci != null && ci <= -50;                       // a strong lid stops convection
+    if (c != null && c >= 500 && !capped && ((rp ?? 0) >= 30 || (cl ?? 0) >= 40)) return 1;
+    return 0;
+  };
   // Wind: the worst gust across the chosen model and the three comparison models, scaled up when the airport shows the forecast running low
   const wb = state.windBias, nowMs = Date.now();
   const biasOn = wb && wb.ratio >= 1.3 && t0 - nowMs < 18 * 3600e3 && t1 > nowMs;   // only for tonight
@@ -2229,8 +2239,9 @@ function renderWeather(w, a, t0, t1, c) {
     null,
     ['Rain %',   (ms) => val('precipitation_probability', ms), (v) => grade(v, 10, 40), (v) => Math.round(v)],
     ['Rain mm',  (ms) => val('precipitation', ms), (v) => grade(v, 0.05, 0.5), (v) => (v < 0.05 ? '0' : v < 10 ? v.toFixed(1).replace(/^0/, '') : Math.round(v))],
-    ['Storm',    (ms) => val('cape', ms), (v) => grade(v, 300, 1000), (v) => (v < 300 ? '–' : v < 1000 ? '!' : '!!'),
-                 (ms) => { const v = val('cape', ms); return v == null ? '' : `CAPE ${Math.round(v)} J/kg: ${v < 300 ? 'stable air' : v < 1000 ? 'some instability, showers possible' : 'unstable air, thunderstorms possible'}`; }],
+    ['Storm',    stormAt, (v) => (v >= 2 ? 'b' : v >= 1 ? 'w' : 'g'), (v) => (v >= 2 ? '!!' : v >= 1 ? '!' : '–'),
+                 (ms) => { const v = stormAt(ms), c = val('cape', ms), ci = val('convective_inhibition', ms);
+                   return v == null ? '' : `${v >= 2 ? 'Thunderstorm forecast' : v >= 1 ? 'Unstable, moist air: showers or storms could build' : 'No storm signal'}${c != null ? ` (CAPE ${Math.round(c)} J/kg${ci != null ? `, CIN ${Math.round(ci)}` : ''})` : ''}`; }],
   ];
   let html = `<div class="wxgrid" style="--n:${hours.length}"><div class="lbl"></div>`;
   for (const h of hours) {
@@ -2254,7 +2265,7 @@ function renderWeather(w, a, t0, t1, c) {
     Dew gap under 2° means dew risk. AOD above 0.6 means a milky, dusty sky. <b>Visibility</b> under 10 km means haze, dust or moisture near the ground; both feed the transparency rating.
     <b>Gust</b> is the strongest of the four forecasts${biasOn ? `, scaled ×${wb.ratio.toFixed(1)} because the ${esc(wb.station)} airport is measuring more wind than forecast` : ''}. <b>Wind 100m</b>: when it is much stronger than at the ground, gusts can come down in bursts even on a "calm" forecast.
     <b>💨 rows</b> compare gusts with each telescope's wind limit (Equipment): ✓ fine, ~ marginal, ✕ too windy for good guiding.
-    <b>Storm</b> is atmospheric instability (CAPE): ! = showers possible, !! = thunderstorms possible. Cloud forecasts often miss storms, so treat !! as a warning even when the cloud row looks clear.
+    <b>Storm</b>: !! = the model forecasts a thunderstorm; ! = unstable air together with real rain or cloud chances, so showers could build. Unstable air on its own (common on hot desert nights) is not flagged.
     ${c ? `<b>ECMWF / ICON / GFS ☁</b> = total cloud from three independent models; when they disagree, the forecast is uncertain.` : ''}</div></details>`;
   $('#wx').innerHTML = html;
 
@@ -2278,7 +2289,7 @@ function renderWeather(w, a, t0, t1, c) {
   const aod = avg((ms) => Aq('aerosol_optical_depth', ms));
   const vis = median((ms) => { const v = val('visibility', ms); return v == null ? null : v / 1000; });
   const rainP = max((ms) => val('precipitation_probability', ms)), rainMm = max((ms) => val('precipitation', ms));
-  const cape = max((ms) => val('cape', ms));
+  const storm = max(stormAt);
   // Before the night: rain in the afternoon/evening washes dust out but leaves unstable, moist air
   const preRain = (() => { let s = 0; for (let ms = t0 - 6 * 3600e3; ms < t0 + 3 * 3600e3; ms += 3600e3) s += val('precipitation', ms) || 0; return s; })();
   const seeZ = median((ms, h) => h.see?.total), seeF = median((ms, h) => h.see?.free);
@@ -2308,8 +2319,7 @@ function renderWeather(w, a, t0, t1, c) {
   const transpNote = [aod != null ? `AOD ${aod.toFixed(2)}` : null, vis != null ? `visibility ${vis >= 99.5 ? '99+' : Math.round(vis)} km` : null].filter(Boolean).join(' · ');
   const rainTxt = (rainMm != null && rainMm >= 0.1) || (rainP != null && rainP >= 40)
     ? ` · ${tag('bad', 'rain risk')}${rainP != null ? ` up to ${Math.round(rainP)}%` : ''}` : rainP != null && rainP >= 15 ? ` · ${tag('warn', 'chance of rain')} ${Math.round(rainP)}%` : '';
-  const stormTxt = cape != null && cape >= 1000 ? ` · ${tag('bad', 'unstable air')} thunderstorms possible, seeing likely poor`
-    : cape != null && cape >= 300 ? ` · ${tag('warn', 'some instability')}` : '';
+  const stormTxt = storm >= 2 ? ` · ${tag('bad', 'thunderstorms forecast')}` : storm >= 1 ? ` · ${tag('warn', 'showers could build')}` : '';
   const afterRain = preRain >= 0.5 ? `<br><span class="note">Rain earlier today (${preRain.toFixed(1)} mm): rain washes dust out of the air, but the air stays humid and turbulent for some hours after a storm, so seeing often improves only later in the night. Watch the dew gap.</span>` : '';
   const wind = gust == null ? '' : gust < 15 ? '' : gust < 30 ? ` · gusts to ${Math.round(gust)} km/h` : ` · ${tag('bad', 'windy')} gusts ${Math.round(gust)} km/h`;
   const aloftTxt = aloft != null && ground != null && aloft >= 25 && aloft > 2 * ground + 10 ? ` · ${tag('warn', 'wind aloft')} ${Math.round(aloft)} km/h at 100 m, gusts may reach the ground` : '';
