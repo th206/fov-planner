@@ -65,6 +65,12 @@
   .rig { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 8px; padding: 9px; background: var(--panel-2); display: flex; flex-direction: column; gap: 7px; }
   .rig + .rig { margin-top: 8px; }
   .rig.off { opacity: .55; }
+  .coordtext { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; max-height: 50vh; overflow: auto; user-select: all; }
+  #coordDlg { max-width: 620px; width: calc(100vw - 32px); }
+  #sharedList .shr { display: flex; gap: 8px; align-items: center; font-size: 12.5px; padding: 4px 0; border-top: 1px solid var(--line); }
+  #sharedList .shr i { width: 14px; border-top: 2px dashed var(--c); flex: none; }
+  .wxgrid .adv { display: none; } .wxgrid.showadv .adv { display: block; }
+  .wxgrid .wxmore { grid-column: 1 / -1; margin: 6px 0 2px; padding: 5px 8px; font: inherit; font-size: 12px; text-align: left; color: var(--accent); background: none; border: 1px dashed var(--line); border-radius: 6px; cursor: pointer; }
   #gearEqList h3 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 10px 0 4px; font-weight: 600; }
   #gearEqList table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   #gearEqList td { padding: 3px 4px; border-top: 1px solid var(--line); } #gearEqList td.n { color: var(--muted); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -300,6 +306,13 @@
       <div id="status"></div>
     </section>
 
+    <section data-tab="frame" class="card" id="sharedCard" hidden>
+      <h2>Shared framing <button class="icon ghost" id="sharedClose" title="Remove the shared frames">✕</button></h2>
+      <div class="note" id="sharedInfo"></div>
+      <div id="sharedList"></div>
+      <div class="row" style="margin-top:8px"><button class="icon" id="sharedAdd">+ Add to my rigs</button><button class="icon ghost" id="sharedGo">⌖ Go to it</button></div>
+    </section>
+
     <section data-tab="frame" class="card" id="targetCard">
       <details id="tgtDetails">
       <summary class="tgtsum"><span class="tgtlabel">Target</span> <span id="tgtSum" class="note">search for an object</span></summary>
@@ -326,6 +339,11 @@
       <div class="row" style="margin-top:10px">
         <label><input type="checkbox" id="follow" checked> Frames follow view center</label>
         <button class="icon ghost" id="recenter" title="Center view and frames on target">⌖ Re-center</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="icon" id="shareBtn" title="Copy a link that opens this target with these frames">⤴ Share framing</button>
+        <button class="icon" id="coordBtn" title="Centre, rotation and mosaic panel coordinates to type or paste into your capture software">◎ Coordinates</button>
+        <span class="note" id="shareMsg"></span>
       </div>
     </section>
 
@@ -510,6 +528,14 @@
   </main>
 </div>
 
+<dialog id="coordDlg">
+  <h2 style="margin-top:0">Coordinates for your capture software</h2>
+  <div class="note">J2000 coordinates of the frame centre (and of every mosaic panel) with the rotation shown here. Type or paste them into the GoTo / target or plan screen of ASIAIR, N.I.N.A., Ekos or SharpCap, then plate-solve and centre.
+    Apps measure the camera angle in different ways, so the first time, compare a plate-solved frame with the angle below.</div>
+  <pre id="coordText" class="coordtext"></pre>
+  <div class="dlgbtns"><span class="row"><button type="button" id="coordCopy">Copy text</button><button type="button" id="coordCsv">Download CSV</button></span><button type="button" id="coordClose" class="primary">Close</button></div>
+</dialog>
+
 <dialog id="galDlg">
   <form id="galForm" method="dialog">
     <h2 style="margin-top:0" id="galDlgTitle">Add to gallery</h2>
@@ -647,7 +673,7 @@ const camById = (id) => state.cams.find((c) => c.id === id);
 
 /* ---------- Geometry ---------- */
 function rigGeom(r) {
-  const s = scopeById(r.scope), c = camById(r.cam);
+  const s = r._s || scopeById(r.scope), c = r._c || camById(r.cam);
   if (!s || !c) return null;
   const fl = s.fl * (r.factor || 1);
   const wmm = c.wpx * c.px / 1000, hmm = c.hpx * c.px / 1000;
@@ -712,7 +738,7 @@ function angSep(ra1, d1, ra2, d2) {
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 /* ---------- Aladin ---------- */
-let aladin, rigOv, tgtOv;
+let aladin, rigOv, tgtOv, shOv, sharedRigs = [], sharedCenter = null;
 async function initAladin() {
   await A.init;
   aladin = A.aladin('#aladin', {
@@ -723,6 +749,8 @@ async function initAladin() {
   });
   tgtOv = A.graphicOverlay({ color: '#ffffff', lineWidth: 1, lineDash: [4, 4], name: 'Target size' });
   rigOv = A.graphicOverlay({ color: '#ff5d5d', lineWidth: 2, name: 'Rig frames' });
+  shOv = A.graphicOverlay({ color: '#ffffff', lineWidth: 2, lineDash: [7, 5], name: 'Shared framing' });
+  aladin.addOverlay(shOv);
   aladin.addOverlay(tgtOv);
   aladin.addOverlay(rigOv);
   aladin.on('positionChanged', (p) => {
@@ -745,6 +773,8 @@ function drawFrames() {
     const g = rigGeom(r); if (!g) continue;
     for (const poly of rigPolygons(r, g, ra0, dec0)) rigOv.add(A.polygon(poly, { color: r.color, lineWidth: 2 }));
   }
+  shOv?.removeAll();
+  if (sharedRigs.length && sharedCenter) for (const r of sharedRigs) { const g = rigGeom(r); if (g) for (const poly of rigPolygons(r, g, sharedCenter[0], sharedCenter[1])) shOv.add(A.polygon(poly, { color: r.color, lineWidth: 2 })); }
   updateLegend();
 }
 function drawTarget() {
@@ -1855,7 +1885,8 @@ const WX_HOURLY = ['cloud_cover', 'cloud_cover_low', 'cloud_cover_mid', 'cloud_c
   'visibility', 'precipitation', 'precipitation_probability', 'cape', 'convective_inhibition', 'weather_code', 'wind_speed_80m', 'wind_speed_120m',
   ...[1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200, 150, 100].flatMap((p) =>
     [`temperature_${p}hPa`, `wind_speed_${p}hPa`, `wind_direction_${p}hPa`, `geopotential_height_${p}hPa`])].join(',');
-let wxSeq = 0, wxTimer, wxLast = null, wxInfoOpen = false;
+let wxSeq = 0, wxTimer, wxLast = null, wxInfoOpen = false, wxAdvOpen = (() => { try { return localStorage.getItem('mrp.wxAdv') === '1'; } catch { return false; } })();
+document.addEventListener('click', (e) => { if (e.target.id !== 'wxMore') return; wxAdvOpen = !wxAdvOpen; try { localStorage.setItem('mrp.wxAdv', wxAdvOpen ? '1' : '0'); } catch {} const g = document.querySelector('.wxgrid'); g?.classList.toggle('showadv', wxAdvOpen); e.target.textContent = wxAdvOpen ? '▾ Less detail' : '▸ More detail: cloud layers, three models, jet stream, cooling, humidity, dust'; });
 document.addEventListener('toggle', (e) => { if (e.target.id === 'wxInfo') wxInfoOpen = e.target.open; }, true);
 const rerenderWeather = () => { if (wxLast) renderWeather(...wxLast); };
 async function fetchJson(url, ms = 15000) {
@@ -2218,60 +2249,75 @@ function renderWeather(w, a, t0, t1, c) {
   const rigScopes = [...new Map(state.rigs.filter((r) => r.on).map((r) => scopeById(r.scope)).filter(Boolean).map((sc) => [sc.id, sc])).values()];
   const short = (n) => (n.length > 11 ? n.slice(0, 10) + '…' : n);
   const seeFmt = (v) => (v >= 6 ? '6+' : v.toFixed(1));
+  // Essentials first (cloud, rain, seeing, transparency, wind, dew); the rest sits behind "More detail"
+  const transpAt = (ms) => {
+    const a = Aq('aerosol_optical_depth', ms), v = val('visibility', ms);
+    if (a == null && v == null) return undefined;
+    const ga = a == null ? 0 : a < 0.3 ? 0 : a < 0.6 ? 1 : 2, gv = v == null ? 0 : v >= 20000 ? 0 : v >= 10000 ? 1 : 2;
+    return Math.max(ga, gv);
+  };
+  const ADV = 'adv';
   const rows = [
     ['Cloud %',  (ms) => val('cloud_cover', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
+    ['Rain %',   (ms) => val('precipitation_probability', ms), (v) => grade(v, 10, 40), (v) => Math.round(v)],
+    ['Storm',    stormAt, (v) => (v >= 2 ? 'b' : v >= 1 ? 'w' : 'g'), (v) => (v >= 2 ? '!!' : v >= 1 ? '!' : '–'),
+                 (ms) => { const v = stormAt(ms), c = val('cape', ms), ci = val('convective_inhibition', ms);
+                   return v == null ? '' : `${v >= 2 ? 'Thunderstorm forecast' : v >= 1 ? 'Unstable, moist air: showers or storms could build' : 'No storm signal'}${c != null ? ` (CAPE ${Math.round(c)} J/kg${ci != null ? `, CIN ${Math.round(ci)}` : ''})` : ''}`; }],
+    null,
+    ['Seeing ″', (ms) => H[ms].see?.total, seeCls, seeFmt, (ms) => { const s = H[ms].see; return s ? `Zenith ${s.total.toFixed(2)}″ · free air ${s.free.toFixed(2)}″ · mostly ${LAYER_NAME[s.main]}` : ''; }],
+    ...(t ? [['On target', (ms) => H[ms].tSee, seeCls, seeFmt, (ms) => H[ms].tAlt > 10 ? `${normId(t.mainId || t.name)} at ${H[ms].tAlt.toFixed(0)}° altitude` : 'below 10°']] : []),
+    ['Transp.',  transpAt, (v) => (v === 0 ? 'g' : v === 1 ? 'w' : 'b'), (v) => (v === 0 ? '✓' : v === 1 ? '~' : '✕'),
+                 (ms) => { const a = Aq('aerosol_optical_depth', ms), v = val('visibility', ms); return `${['Good', 'Hazy', 'Poor'][transpAt(ms)] || ''} · AOD ${a != null ? a.toFixed(2) : '—'} · visibility ${v != null ? (v / 1000).toFixed(0) + ' km' : '—'}`; }],
+    null,
+    ['Gust km/h', gustAt, (v) => grade(v, 15, 30), (v) => Math.round(v),
+                  (ms) => { const g = gustRaw(ms); return g == null ? '' : `Strongest gust of the four forecasts: ${Math.round(g)} km/h${biasOn ? ` × ${wb.ratio.toFixed(1)} (airport check) = ${Math.round(g * wb.ratio)}` : ''}`; }],
+    ...rigScopes.map((sc) => ['💨 ' + esc(short(sc.name)), (ms) => { const g = gustAt(ms); return g == null ? undefined : g / windLimit(sc); },
+      (v) => (v <= 1 ? 'g' : v <= 1.3 ? 'w' : 'b'), (v) => (v <= 1 ? '✓' : v <= 1.3 ? '~' : '✕'),
+      (ms) => { const g = gustAt(ms); return g == null ? '' : `${sc.name}: gusts ${Math.round(g)} km/h vs your limit ${windLimit(sc)} km/h${Number.isFinite(sc.wind) ? '' : ' (estimated — set it under Equipment)'}`; }]),
+    ['Dew gap°', (ms) => { const t2 = val('temperature_2m', ms), d = val('dew_point_2m', ms); return t2 == null || d == null ? undefined : t2 - d; },
+                 (v) => grade(v, 4, 2, false), (v) => Math.round(v), (ms) => `Air ${Math.round(val('temperature_2m', ms) ?? NaN)}° · dew point ${Math.round(val('dew_point_2m', ms) ?? NaN)}° · humidity ${Math.round(val('relative_humidity_2m', ms) ?? NaN)}%`],
+    // ---- more detail ----
+    [ADV],
     ['Low',      (ms) => val('cloud_cover_low', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
     ['Mid',      (ms) => val('cloud_cover_mid', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
     ['High',     (ms) => val('cloud_cover_high', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
     ...(c ? [null, ...CMP_MODELS.map((m) => [m.name + ' ☁', (ms) => Cm('cloud_cover_' + m.id, ms), (v) => grade(v, 20, 60), (v) => Math.round(v),
       () => `Total cloud % from the ${m.name} model`])] : []),
     null,
-    ['Seeing ″', (ms) => H[ms].see?.total, seeCls, seeFmt, (ms) => { const s = H[ms].see; return s ? `Zenith ${s.total.toFixed(2)}″ · free air ${s.free.toFixed(2)}″ · mostly ${LAYER_NAME[s.main]}` : ''; }],
     ['Free air', (ms) => H[ms].see?.free, (v) => grade(v, 1.0, 1.8), seeFmt],
-    ...(t ? [['On target', (ms) => H[ms].tSee, seeCls, seeFmt, (ms) => H[ms].tAlt > 10 ? `${normId(t.mainId || t.name)} at ${H[ms].tAlt.toFixed(0)}° altitude` : 'below 10°']] : []),
     ['Jet m/s',  jetAt, (v) => grade(v, 25, 42), (v) => Math.round(v)],
     ['Cool °/h', coolAt, (v) => grade(v, 1, 2), (v) => (v < 0.05 && v > -0.05 ? '0' : v.toFixed(1).replace(/^(-?)0\./, '$1.'))],
-    null,
-    ['Humidity', (ms) => val('relative_humidity_2m', ms), (v) => grade(v, 70, 85), (v) => Math.round(v)],
-    ['Dew gap°', (ms) => { const t2 = val('temperature_2m', ms), d = val('dew_point_2m', ms); return t2 == null || d == null ? undefined : t2 - d; },
-                 (v) => grade(v, 4, 2, false), (v) => Math.round(v)],
-    ['Gust km/h', gustAt, (v) => grade(v, 15, 30), (v) => Math.round(v),
-                  (ms) => { const g = gustRaw(ms); return g == null ? '' : `Strongest gust of the four forecasts: ${Math.round(g)} km/h${biasOn ? ` × ${wb.ratio.toFixed(1)} (airport check) = ${Math.round(g * wb.ratio)}` : ''}`; }],
     ['Wind 100m', aloftAt, (v) => grade(v, 20, 35), (v) => Math.round(v),
                   (ms) => { const a = aloftAt(ms), w = val('wind_speed_10m', ms); return a == null ? '' : `Wind 80–120 m above ground: ${Math.round(a)} km/h${w != null && a > 2 * w + 10 ? ' — much stronger than at the ground; gusts can come down in bursts' : ''}`; }],
-    ...rigScopes.map((sc) => ['💨 ' + esc(short(sc.name)), (ms) => { const g = gustAt(ms); return g == null ? undefined : g / windLimit(sc); },
-      (v) => (v <= 1 ? 'g' : v <= 1.3 ? 'w' : 'b'), (v) => (v <= 1 ? '✓' : v <= 1.3 ? '~' : '✕'),
-      (ms) => { const g = gustAt(ms); return g == null ? '' : `${sc.name}: gusts ${Math.round(g)} km/h vs your limit ${windLimit(sc)} km/h${Number.isFinite(sc.wind) ? '' : ' (estimated — set it under Equipment)'}`; }]),
+    null,
+    ['Humidity', (ms) => val('relative_humidity_2m', ms), (v) => grade(v, 70, 85), (v) => Math.round(v)],
     ['Dust AOD', (ms) => Aq('aerosol_optical_depth', ms), (v) => grade(v, 0.3, 0.6), (v) => v.toFixed(1).replace(/^0/, '')],
     ['Visib km', (ms) => { const v = val('visibility', ms); return v == null ? undefined : v / 1000; }, (v) => grade(v, 20, 10, false), (v) => (v >= 99.5 ? '99' : Math.round(v)),
                  (ms) => { const v = val('visibility', ms); return v == null ? '' : `Visibility ${(v / 1000).toFixed(1)} km`; }],
-    null,
-    ['Rain %',   (ms) => val('precipitation_probability', ms), (v) => grade(v, 10, 40), (v) => Math.round(v)],
     ['Rain mm',  (ms) => val('precipitation', ms), (v) => grade(v, 0.05, 0.5), (v) => (v < 0.05 ? '0' : v < 10 ? v.toFixed(1).replace(/^0/, '') : Math.round(v))],
-    ['Storm',    stormAt, (v) => (v >= 2 ? 'b' : v >= 1 ? 'w' : 'g'), (v) => (v >= 2 ? '!!' : v >= 1 ? '!' : '–'),
-                 (ms) => { const v = stormAt(ms), c = val('cape', ms), ci = val('convective_inhibition', ms);
-                   return v == null ? '' : `${v >= 2 ? 'Thunderstorm forecast' : v >= 1 ? 'Unstable, moist air: showers or storms could build' : 'No storm signal'}${c != null ? ` (CAPE ${Math.round(c)} J/kg${ci != null ? `, CIN ${Math.round(ci)}` : ''})` : ''}`; }],
   ];
-  let html = `<div class="wxgrid" style="--n:${hours.length}"><div class="lbl"></div>`;
+  let html = `<div class="wxgrid ${wxAdvOpen ? 'showadv' : ''}" style="--n:${hours.length}"><div class="lbl"></div>`;
   for (const h of hours) {
     const lh = new Date(h.ms + tz * 3600e3).getUTCHours();
     html += `<div class="hd ${h.dark ? 'dark' : ''}" title="${h.dark ? 'Astronomical darkness' : 'Twilight / daylight'}">${String(lh).padStart(2, '0')}</div>`;
   }
+  let adv = '';
   for (const r of rows) {
-    if (!r) { html += '<div class="sep"></div>'; continue; }
+    if (r && r[0] === ADV) { adv = ' adv'; html += `<button type="button" class="wxmore" id="wxMore">${wxAdvOpen ? '▾ Less detail' : '▸ More detail: cloud layers, three models, jet stream, cooling, humidity, dust'}</button>`; continue; }
+    if (!r) { html += `<div class="sep${adv}"></div>`; continue; }
     const [label, get, cls, fmt, tip] = r;
-    html += `<div class="lbl">${label}</div>`;
+    html += `<div class="lbl${adv}">${label}</div>`;
     for (const h of hours) {
       const v = get(h.ms);
       const title = tip ? ` title="${esc(tip(h.ms))}"` : '';
-      html += v == null || !isFinite(v) ? '<div>·</div>' : `<div class="${cls(v)}"${title}>${fmt(v)}</div>`;
+      html += v == null || !isFinite(v) ? `<div class="${adv.trim()}">·</div>` : `<div class="${cls(v)}${adv}"${title}>${fmt(v)}</div>`;
     }
   }
   const offMin = Math.round(((tz % 1) + 1) % 1 * 60);
   html += `</div><details class="info" id="wxInfo" ${wxInfoOpen ? 'open' : ''}><summary>ⓘ How to read this table</summary><div class="wxnote">Bold hours are astronomical darkness.${offMin ? ` Columns are hourly forecasts at <b>:${String(offMin).padStart(2, '0')}</b> past each local hour shown (this time zone is offset from UTC by a fraction of an hour).` : ''} <b>Seeing</b> is a model estimate (FWHM at 500 nm, zenith) from temperature and wind at 16 heights up to ~16 km; hover a cell for the main turbulent layer.
     <b>Free air</b> leaves out the lowest 1 km, which depends heavily on your own site. <b>On target</b> adds the extra air at the target's altitude.
     <b>Jet</b> = strongest wind at 300–200 hPa (9–12 km). <b>Cool</b> = how fast the air is cooling; above 2°/h expect tube currents, so let the scope cool.
-    Dew gap under 2° means dew risk. AOD above 0.6 means a milky, dusty sky. <b>Visibility</b> under 10 km means haze, dust or moisture near the ground; both feed the transparency rating.
+    <b>Transp.</b> combines dust (AOD) and visibility: ✓ good, ~ hazy, ✕ poor. Dew gap under 2° means dew risk. AOD above 0.6 means a milky, dusty sky. <b>Visibility</b> under 10 km means haze, dust or moisture near the ground; both feed the transparency rating.
     <b>Gust</b> is the strongest of the four forecasts${biasOn ? `, scaled ×${wb.ratio.toFixed(1)} because the ${esc(wb.station)} airport is measuring more wind than forecast` : ''}. <b>Wind 100m</b>: when it is much stronger than at the ground, gusts can come down in bursts even on a "calm" forecast.
     <b>💨 rows</b> compare gusts with each telescope's wind limit (Equipment): ✓ fine, ~ marginal, ✕ too windy for good guiding.
     <b>Storm</b>: !! = the model forecasts a thunderstorm; ! = unstable air together with real rain or cloud chances, so showers could build. Unstable air on its own (common on hot desert nights) is not flagged.
@@ -3025,6 +3071,109 @@ $('#galForm').addEventListener('submit', async (e) => {
   finally { $('#galSave').disabled = false; }
 });
 
+/* ---------- Share a framing (link) and export coordinates ---------- */
+const b64u = { enc: (o) => btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+  dec: (s) => JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))))) };
+function shareData() {
+  const t = state.target;
+  const rigs = state.rigs.filter((r) => r.on).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g).map(({ r, g }) => ({
+    s: g.s.name, fl: g.s.fl, ap: g.s.ap || null, f: r.factor || 1, c: g.c.name, w: g.c.wpx, h: g.c.hpx, px: g.c.px,
+    rot: r.rot || 0, cols: r.cols, rows: r.rows, ov: r.overlap || 0, col: r.color }));
+  return { v: 1, t: t ? { n: t.comet ? t.name : normId(t.mainId || t.name), ra: +t.ra.toFixed(5), dec: +t.dec.toFixed(5), d: t.typeDesc || '', z: state.size?.maj ? [state.size.maj, state.size.min || state.size.maj, state.size.pa || 0] : null } : null,
+    c: [+state.center[0].toFixed(5), +state.center[1].toFixed(5)], r: rigs };
+}
+$('#shareBtn').addEventListener('click', async () => {
+  const d = shareData();
+  if (!d.r.length) { $('#shareMsg').textContent = 'Turn on at least one rig first.'; return; }
+  const url = `https://fovplanner.com/#share=${b64u.enc(d)}`;
+  const title = `${d.t?.n || 'Framing'} — FOV Planner`;
+  track('share');
+  try { if (navigator.share && matchMedia('(pointer:coarse)').matches) { await navigator.share({ title, url }); return; } } catch { /* fall back to copy */ }
+  try { await navigator.clipboard.writeText(url); $('#shareMsg').textContent = 'Link copied: paste it in a message.'; }
+  catch { prompt('Copy this link:', url); }
+  setTimeout(() => { $('#shareMsg').textContent = ''; }, 5000);
+});
+function loadShared(code) {
+  let d; try { d = b64u.dec(code); } catch { return false; }
+  if (!d || !Array.isArray(d.r) || !d.c) return false;
+  sharedRigs = d.r.map((x, k) => ({ id: 'shared' + k, _s: { name: x.s, fl: +x.fl, ap: x.ap ? +x.ap : null }, _c: { name: x.c, wpx: +x.w, hpx: +x.h, px: +x.px },
+    factor: +x.f || 1, rot: +x.rot || 0, cols: +x.cols || 1, rows: +x.rows || 1, overlap: +x.ov || 0, color: /^#[0-9a-f]{6}$/i.test(x.col) ? x.col : '#ffffff', on: true }));
+  sharedCenter = [+d.c[0], +d.c[1]];
+  if (d.t) setTarget({ name: d.t.n, mainId: d.t.n, ra: +d.t.ra, dec: +d.t.dec, typeDesc: d.t.d, mags: {}, aliases: [] }, d.t.z ? { maj: d.t.z[0], min: d.t.z[1], pa: d.t.z[2], src: 'shared' } : null, d.t.n);
+  renderShared(); goShared(); setTab('frame', true); track('share/open');
+  return true;
+}
+function goShared() {
+  if (!sharedCenter || !aladin) return;
+  state.center = sharedCenter.slice(); aladin.gotoRaDec(...sharedCenter);
+  const m = Math.max(...sharedRigs.map((r) => { const g = rigGeom(r); return g ? Math.max(g.mw, g.mh) : 0; }), 0.2);
+  aladin.setFoV(Math.min(90, m * 1.4)); drawFrames(); updateHud();
+}
+function renderShared() {
+  $('#sharedCard').hidden = !sharedRigs.length;
+  if (!sharedRigs.length) { drawFrames(); return; }
+  $('#sharedInfo').textContent = 'Someone shared this framing with you. Its frames are drawn dashed; your own rigs stay as they are.';
+  $('#sharedList').innerHTML = sharedRigs.map((r) => { const g = rigGeom(r);
+    return `<div class="shr" style="--c:${r.color}"><i></i><span>${esc(r._s.name)}${r.factor !== 1 ? ` ×${r.factor}` : ''} + ${esc(r._c.name)} · ${g ? `${fmtAngle(g.mw)} × ${fmtAngle(g.mh)}` : ''} · rot ${r.rot}°${r.cols * r.rows > 1 ? ` · ${r.cols}×${r.rows} mosaic` : ''}</span></div>`; }).join('');
+  drawFrames();
+}
+$('#sharedClose').addEventListener('click', () => { sharedRigs = []; sharedCenter = null; renderShared(); });
+$('#sharedGo').addEventListener('click', goShared);
+$('#sharedAdd').addEventListener('click', () => {
+  for (const x of sharedRigs) {
+    let sc = state.scopes.find((s) => s.name === x._s.name && +s.fl === +x._s.fl);
+    if (!sc) { sc = { id: newId(), name: x._s.name, fl: x._s.fl, ap: x._s.ap }; state.scopes.push(sc); }
+    let cm = state.cams.find((c) => c.name === x._c.name && +c.wpx === +x._c.wpx);
+    if (!cm) { cm = { id: newId(), name: x._c.name, wpx: x._c.wpx, hpx: x._c.hpx, px: x._c.px }; state.cams.push(cm); }
+    const same = state.rigs.find((r) => r.scope === sc.id && r.cam === cm.id && (r.factor || 1) === x.factor);
+    if (same) Object.assign(same, { rot: x.rot, cols: x.cols, rows: x.rows, overlap: x.overlap, on: true });   // update, don't duplicate
+    else state.rigs.push({ id: newId(), scope: sc.id, cam: cm.id, factor: x.factor, rot: x.rot, cols: x.cols, rows: x.rows, overlap: x.overlap, color: x.color, on: true });
+  }
+  state.follow = false; $('#follow').checked = false;
+  state.center = sharedCenter.slice();
+  sharedRigs = []; sharedCenter = null;
+  saveStore(); renderShared(); renderRigs(); renderGearEq(); drawFrames(); track('share/add');
+});
+// Coordinates: centre + every mosaic panel, per visible rig
+function coordRows() {
+  const out = [], t = state.target, [ra0, dec0] = state.center;
+  for (const r of [...state.rigs.filter((x) => x.on), ...sharedRigs]) {
+    const g = rigGeom(r); if (!g) continue;
+    const th = (r.rot || 0) * D2R, sx = 2 * g.hx * g.step, sy = 2 * g.hy * g.step, panels = [];
+    for (let j = r.rows - 1; j >= 0; j--) for (let i = r.cols - 1; i >= 0; i--) {
+      const cx = (i - (r.cols - 1) / 2) * sx, cy = (j - (r.rows - 1) / 2) * sy;
+      const [x, y] = rot([cx, cy], th); panels.push(deproj(ra0, dec0, x, y));
+    }
+    out.push({ rig: `${g.s.name}${r.factor !== 1 ? ` ×${r.factor}` : ''} + ${g.c.name}`, rot: r.rot || 0, cols: r.cols, rows: r.rows, ov: r.overlap || 0, panels, fov: `${fmtAngle(g.w)} × ${fmtAngle(g.h)}` });
+  }
+  return { name: t ? (t.comet ? t.name : normId(t.mainId || t.name)) : 'Field', ra0, dec0, rigs: out };
+}
+const raHms = (ra) => { const v = ((ra % 360) + 360) % 360 / 15, h = Math.floor(v), m = Math.floor((v - h) * 60), s = ((v - h) * 60 - m) * 60; return `${String(h).padStart(2, '0')}h ${String(m).padStart(2, '0')}m ${s.toFixed(1).padStart(4, '0')}s`; };
+const decDms = (dec) => { const sg = dec < 0 ? '-' : '+', v = Math.abs(dec), d = Math.floor(v), m = Math.floor((v - d) * 60), s = Math.round(((v - d) * 60 - m) * 60); return `${sg}${String(d).padStart(2, '0')}° ${String(m).padStart(2, '0')}′ ${String(s).padStart(2, '0')}″`; };
+$('#coordBtn').addEventListener('click', () => {
+  const d = coordRows();
+  if (!d.rigs.length) { $('#shareMsg').textContent = 'Turn on at least one rig first.'; return; }
+  let txt = `${d.name}\nFrame centre (J2000): RA ${raHms(d.ra0)}  Dec ${decDms(d.dec0)}   (${d.ra0.toFixed(4)}°, ${d.dec0 >= 0 ? '+' : ''}${d.dec0.toFixed(4)}°)\n`;
+  for (const r of d.rigs) {
+    txt += `\n${r.rig} — ${r.fov}\nRotation ${r.rot}° (position angle of the frame's short side, east of north)\n`;
+    if (r.panels.length > 1) {
+      txt += `Mosaic ${r.cols}×${r.rows}, ${r.ov}% overlap (panels north to south, east to west before rotation):\n`;
+      r.panels.forEach(([ra, dec], k) => { txt += `  Panel ${k + 1}: RA ${raHms(ra)}  Dec ${decDms(dec)}   (${ra.toFixed(4)}°, ${dec >= 0 ? '+' : ''}${dec.toFixed(4)}°)\n`; });
+    }
+  }
+  $('#coordText').textContent = txt.trim();
+  $('#coordDlg').dataset.csv = ['Name,RA_hms,Dec_dms,RA_deg,Dec_deg,Rotation_deg,Rig',
+    ...d.rigs.flatMap((r) => (r.panels.length > 1 ? r.panels : [[d.ra0, d.dec0]]).map(([ra, dec], k) =>
+      [`"${d.name}${r.panels.length > 1 ? ` P${k + 1}` : ''}"`, raHms(ra), decDms(dec), ra.toFixed(5), dec.toFixed(5), r.rot, `"${r.rig.replace(/"/g, '')}"`].join(',')))].join('\n');
+  $('#coordDlg').showModal(); track('coords');
+});
+$('#coordClose').addEventListener('click', () => $('#coordDlg').close());
+$('#coordCopy').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('#coordText').textContent); $('#coordCopy').textContent = 'Copied'; setTimeout(() => { $('#coordCopy').textContent = 'Copy text'; }, 2000); } catch { /* text is selectable */ } });
+$('#coordCsv').addEventListener('click', () => {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([$('#coordDlg').dataset.csv], { type: 'text/csv' }));
+  a.download = `${coordRows().name.replace(/[^\w.-]+/g, '_')}_framing.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
+
 /* ---------- Tabs ---------- */
 const TABS = ['frame', 'tonight', 'sky', 'gallery', 'gear'];
 function setTab(name, quiet) {
@@ -3218,7 +3367,7 @@ try {
   f.textContent = 'The sky viewer could not start (' + (e.message || e) + '). It needs a browser with WebGL2.';
 }
 const initial = decodeURIComponent(location.hash.slice(1)) || 'M31';
-search(initial);
+if (!(initial.startsWith('share=') && loadShared(location.hash.slice(7)))) search(initial.startsWith('share=') ? 'M31' : initial);
 </script>
 </body>
 </html>

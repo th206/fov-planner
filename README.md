@@ -29,6 +29,9 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Fit check for every rig: how much of the frame the target fills, or how much of the target one frame covers and what mosaic you need
 - Target details (type, size, magnitude, max altitude, best season) in a collapsible panel; sizes for large nebulae come from a curated catalog
 
+- **Share framing**: one link opens the same target with your frames (rotation, mosaics) drawn dashed for a friend, who can add them to their own rigs
+- **Coordinates** for capture software (ASIAIR, N.I.N.A., Ekos, SharpCap): J2000 centre, rotation and every mosaic panel, as text to copy or a CSV file
+
 ## Tonight's targets, filtered for your rigs
 
 - ~2,200 objects ranked for the chosen night and place: galaxies, nebulae, Lynds bright (LBN) and dark (LDN) nebulae, optically visible supernova remnants, planetary nebulae and clusters
@@ -57,6 +60,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Hourly night forecast from [Open-Meteo](https://open-meteo.com/): cloud (low/mid/high), humidity, dew risk, wind gusts, rain chance and amount, storm risk (thunderstorms the model forecasts, or unstable air with real rain or cloud chances), and transparency from dust/haze (aerosol optical depth) plus visibility; a note after daytime rain explains its effect on transparency and seeing
 - Choose the forecast model (best match, ECMWF, ICON or GFS), and compare total cloud from all three side by side: a "models disagree" flag shows when the forecast is uncertain
 - **Seeing estimate** in arcseconds from a layered turbulence model (Dewan / Tatarskii) using temperature and wind at 16 pressure levels (1000–100 hPa): zenith, free-air (above 1 km) and on-target, plus the main turbulent layer, jet-stream wind and cooling rate
+- The hourly table shows the essentials (cloud, rain, storms, seeing, transparency, gusts per telescope, dew); cloud layers, the three models, jet stream, cooling, humidity and dust sit under **More detail**
 - 7Timer ASTRO chart, plus links to meteoblue and Clear Outside (and Qatar Met / QMD for locations in Qatar)
 - Altitude chart for any night, with twilight shading
 
