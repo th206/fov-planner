@@ -65,6 +65,9 @@
   .rig { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 8px; padding: 9px; background: var(--panel-2); display: flex; flex-direction: column; gap: 7px; }
   .rig + .rig { margin-top: 8px; }
   .rig.off { opacity: .55; }
+  #gearEqList h3 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 10px 0 4px; font-weight: 600; }
+  #gearEqList table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  #gearEqList td { padding: 3px 4px; border-top: 1px solid var(--line); } #gearEqList td.n { color: var(--muted); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   details.about > summary { font-size: 11.5px; color: var(--muted); cursor: pointer; margin-top: 2px; }
   details.about p { margin: 6px 0; line-height: 1.5; }
   .weekbox { margin: 4px 0 10px; }
@@ -429,14 +432,20 @@
       <div class="note galowner"><a href="#" id="galOwner">Owner: unlock uploads</a></div>
     </section>
 
-    <section data-tab="gear" class="card">
-      <h2>My images <span class="row"><button class="icon" id="imgAddBtn" title="Add plate-solved images">+ Add</button></span></h2>
+    <section data-tab="gallery" class="card" id="myImagesCard">
+      <h2>Private images <span class="note" style="text-transform:none;letter-spacing:0">· this browser only</span> <span class="row"><button class="icon" id="imgAddBtn" title="Add plate-solved images">+ Add</button></span></h2>
       <input type="file" id="imgFile" multiple hidden accept=".jpg,.jpeg,.png,.fits,.fit,.fts,.wcs,.ini,.txt">
       <div id="imgList"></div>
       <div id="imgMsg" class="note"></div>
       <details class="info"><summary>ⓘ Which files work</summary><div class="wxnote">Overlay your own plate-solved images. Select the image <b>and</b> its solve file together:
         astrometry.net <code>wcs.fits</code>, ASTAP <code>.wcs</code>, or a FITS image with WCS in its header (PixInsight, Siril).
         Images stay in this browser and show up whenever their part of the sky is in view.</div></details>
+    </section>
+
+
+    <section data-tab="gear" class="card" id="gearEq">
+      <h2>Equipment <span class="row"><button class="icon" id="gearEqEdit">Edit equipment</button></span></h2>
+      <div id="gearEqList"></div>
     </section>
 
     <section data-tab="gear" class="card">
@@ -2303,12 +2312,36 @@ function renderWeather(w, a, t0, t1, c) {
   if (cloud == null) { $('#wxSum').innerHTML = '<span class="note">No forecast data for this night.</span>'; return; }
   const tag = (c, txt) => `<span class="tag ${c}">${txt}</span>`;
   const sky = cloud < 20 ? tag('good', 'clear') : cloud < 50 ? tag('warn', 'partly cloudy') : tag('bad', 'cloudy');
-  const cmp = c ? CMP_MODELS.map((m) => ({ n: m.name, v: avg((ms) => Cm('cloud_cover_' + m.id, ms)) })).filter((x) => x.v != null) : [];
+  // Model agreement hour by hour over the dark hours: say when they agree and when (and which model) they part ways
   let cmpTxt = '';
-  if (cmp.length >= 2) {
-    const vs = cmp.map((x) => x.v), spread = Math.max(...vs) - Math.min(...vs);
-    const list = cmp.map((x) => `${x.n} ${Math.round(x.v)}%`).join(', ');
-    cmpTxt = `<br>${spread >= 30 ? tag('warn', 'models disagree') : spread >= 15 ? tag('warn', 'models differ a little') : tag('good', 'models agree')} <span class="note">(cloud: ${list})</span>`;
+  if (c) {
+    const hh = (ms) => { const d = new Date(ms + tz * 3600e3); return `${String(d.getUTCHours()).padStart(2, '0')}:00`; };
+    const per = use.map((h) => {
+      const v = CMP_MODELS.map((m) => ({ n: m.name, v: Cm('cloud_cover_' + m.id, h.ms) })).filter((x) => x.v != null);
+      if (v.length < 2) return null;
+      const vs = v.map((x) => x.v), med = vs.slice().sort((a, b) => a - b)[Math.floor(vs.length / 2)];
+      const odd = v.reduce((a, b) => (Math.abs(b.v - med) > Math.abs(a.v - med) ? b : a));
+      return { ms: h.ms, bad: Math.max(...vs) - Math.min(...vs) >= 30, odd, med };
+    }).filter(Boolean);
+    if (per.length) {
+      const nb = per.filter((x) => x.bad);
+      const oddNames = [...new Set(nb.map((x) => x.odd.n))];
+      const who = oddNames.length === 1 ? (() => { const o = nb.map((x) => x.odd); const up = o.filter((x, k) => x.v > nb[k].med).length >= o.length / 2;
+        return `${oddNames[0]} ${up ? 'shows cloud' : 'is clearer'} (up to ${Math.round(Math.max(...o.map((x) => x.v)))}%)`; })() : 'the three models differ';
+      const firstBad = per.findIndex((x) => x.bad), lastBad = per.length - 1 - per.slice().reverse().findIndex((x) => x.bad);
+      const end = per[per.length - 1].ms + 3600e3;
+      let txt;
+      if (!nb.length) txt = `${tag('good', 'models agree')} <span class="note">all night</span>`;
+      else if (nb.length === per.length) txt = `${tag('warn', 'models disagree')} <span class="note">all night: ${who}</span>`;
+      else if (per.slice(firstBad).every((x) => x.bad)) txt = `${tag('good', 'models agree')} <span class="note">until ${hh(per[firstBad].ms)}, then ${who}</span>`;
+      else if (per.slice(0, lastBad + 1).every((x) => x.bad)) txt = `${tag('warn', 'models disagree')} <span class="note">until ${hh(per[lastBad].ms + 3600e3)} (${who}), then agree</span>`;
+      else {
+        const spans = []; let s0 = null;
+        per.forEach((x, k) => { if (x.bad && s0 == null) s0 = x.ms; if ((!x.bad || k === per.length - 1) && s0 != null) { spans.push(`${hh(s0)}–${hh(x.bad ? x.ms + 3600e3 : x.ms)}`); s0 = null; } });
+        txt = `${tag('warn', 'models disagree at times')} <span class="note">${spans.slice(0, 3).join(', ')}: ${who}</span>`;
+      }
+      cmpTxt = `<br>${txt}`;
+    }
   }
   const seeTag = (v) => v == null ? '—' : tag(v < 1.5 ? 'good' : v < 2.5 ? 'warn' : 'bad', (v >= 6 ? '6+' : v.toFixed(1)) + '″');
   const tAod = aod == null ? null : aod < 0.3 ? 0 : aod < 0.6 ? 1 : 2;
@@ -2556,6 +2589,16 @@ function readTbl(sel, numFields) {
     return o;
   });
 }
+function renderGearEq() {
+  const box = $('#gearEqList'); if (!box) return;
+  const kindTxt = (c) => ({ mono: 'mono', osc: 'colour' })[camKind(c)] || '';
+  const ftName = (f) => (FILTER_TYPES.find(([k]) => k === f.type) || [, f.type])[1];
+  const fsz = (f) => (FILTER_SIZES.find(([k]) => k === f.size) || [, f.size])[1];
+  box.innerHTML = `<h3>Telescopes &amp; lenses</h3><table>${state.scopes.map((sc) => `<tr><td>${esc(sc.name)}</td><td class="n">${sc.fl} mm${sc.ap ? ` · f/${(sc.fl / sc.ap).toFixed(1)}` : ''}</td><td class="n" title="Wind limit (gusts)">💨 ${windLimit(sc)} km/h${Number.isFinite(sc.wind) ? '' : '*'}</td></tr>`).join('')}</table>
+    <h3>Cameras</h3><table>${state.cams.map((c) => `<tr><td>${esc(c.name)}</td><td class="n">${c.wpx}×${c.hpx} · ${c.px} µm</td><td class="n">${kindTxt(c)}</td></tr>`).join('')}</table>
+    <h3>Filters</h3>${(state.filters || []).length ? `<table>${state.filters.map((f) => `<tr><td>${esc(f.name)}</td><td class="n">${esc(ftName(f))}</td><td class="n">${esc(fsz(f))}${f.bw ? ` · ${f.bw} nm` : ''}</td></tr>`).join('')}</table>` : '<div class="note">No filters yet: add them to get filter suggestions.</div>'}
+    <div class="note" style="margin-top:6px">* estimated wind limit: set your own under Edit equipment. Rigs (which scope goes with which camera) are set up under Frame.</div>`;
+}
 function saveEq() {
   const scopes = readTbl('#scopeTbl', ['fl', 'ap', 'wind']).filter((s) => s.name && s.fl > 0).map((s) => ({ ...s, wind: Number.isFinite(s.wind) ? s.wind : null }));
   const cams = readTbl('#camTbl', ['wpx', 'hpx', 'px']).filter((c) => c.name && c.wpx > 0 && c.hpx > 0 && c.px > 0);
@@ -2564,7 +2607,7 @@ function saveEq() {
   state.filters = readTbl('#filtTbl', ['bw']).filter((f) => f.name).map((f) => ({ ...f, bw: Number.isFinite(f.bw) ? f.bw : null }));
   for (const r of state.rigs) if (r.filter && !filterById(r.filter)) r.filter = '';
   for (const r of state.rigs) { if (!scopeById(r.scope)) r.scope = scopes[0].id; if (!camById(r.cam)) r.cam = cams[0].id; }
-  saveStore(); $('#eqDlg').close(); renderRigs(); drawFrames(); rerenderWeather();
+  saveStore(); $('#eqDlg').close(); renderRigs(); drawFrames(); rerenderWeather(); renderGearEq();
 }
 
 
@@ -3066,6 +3109,8 @@ $('#t7').addEventListener('toggle', () => { if ($('#t7').open) load7Timer(); });
 $('#t7img').addEventListener('error', () => { $('#t7img').alt = '7Timer did not respond. Try ↻ later.'; });
 window.addEventListener('resize', drawAltChart);
 $('#eqBtn').addEventListener('click', () => openEq());
+$('#gearEqEdit').addEventListener('click', () => openEq());
+renderGearEq();
 $('#eqCancel').addEventListener('click', () => $('#eqDlg').close());
 $('#eqSave').addEventListener('click', saveEq);
 $('#eqReset').addEventListener('click', () => openEq(DEFAULT_SCOPES, DEFAULT_CAMS));

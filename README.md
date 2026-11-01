@@ -6,7 +6,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 
 ## Layout
 
-- Four tabs, one job each: **Frame** (search, target, rigs), **Tonight** (night verdict, comets, target list, visibility), **Sky** (location, Moon, forecast) and **Gear** (my images, settings, backup)
+- Five tabs, one job each: **Frame** (search, target, rigs), **Tonight** (night verdict, visibility, target list, comets), **Sky** (location, Moon, 7-night outlook, forecast), **Gallery** (public gallery plus private browser-only images) and **Gear** (equipment, settings, backup)
 - On phones the tabs sit at the bottom and the sky map stays on screen while you adjust rigs; on desktop the panel widens for Tonight and Sky
 - Rig cards are one line each (field of view, image scale, fit and filter tags); tap a rig to open its settings
 
@@ -54,7 +54,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Gusts are the strongest of four forecasts (chosen model plus ECMWF, ICON and GFS); wind at 80–120 m warns when gusts may come down to a "calm" ground
 - **Airport wind check**: the measured wind at the nearest airport is compared with the forecast for the same hour; if the forecast is running low, tonight's gusts are scaled up to match
 - **Observed now**: the latest report from the nearest airport within 150 km (METAR, via the [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu/)): measured visibility, cloud and its height, rain, thunderstorms, dust or fog, and wind, decoded into plain words
-- Hourly night forecast from [Open-Meteo](https://open-meteo.com/): cloud (low/mid/high), humidity, dew risk, wind gusts, rain chance and amount, storm risk (CAPE instability), and transparency from dust/haze (aerosol optical depth) plus visibility; a note after daytime rain explains its effect on transparency and seeing
+- Hourly night forecast from [Open-Meteo](https://open-meteo.com/): cloud (low/mid/high), humidity, dew risk, wind gusts, rain chance and amount, storm risk (thunderstorms the model forecasts, or unstable air with real rain or cloud chances), and transparency from dust/haze (aerosol optical depth) plus visibility; a note after daytime rain explains its effect on transparency and seeing
 - Choose the forecast model (best match, ECMWF, ICON or GFS), and compare total cloud from all three side by side: a "models disagree" flag shows when the forecast is uncertain
 - **Seeing estimate** in arcseconds from a layered turbulence model (Dewan / Tatarskii) using temperature and wind at 16 pressure levels (1000–100 hPa): zenith, free-air (above 1 km) and on-target, plus the main turbulent layer, jet-stream wind and cooling rate
 - 7Timer ASTRO chart, plus links to meteoblue and Clear Outside (and Qatar Met / QMD for locations in Qatar)
