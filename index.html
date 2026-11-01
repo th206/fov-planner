@@ -3,8 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Multi-Rig FOV Planner</title>
-<meta name="description" content="Compare several telescope + camera fields of view on the same deep-sky target.">
+<title>FOV Planner – Astrophotography framing for all your telescopes and cameras</title>
+<meta name="description" content="Free astrophotography planner: overlay the field of view of several telescope + camera rigs on any deep-sky target, find tonight's best targets for your gear, with seeing, cloud, wind and Bortle forecasts.">
+<link rel="canonical" href="https://fovplanner.com/">
+<meta name="theme-color" content="#0b0e14">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="FOV Planner">
+<meta property="og:title" content="FOV Planner – compare all your telescope + camera fields of view">
+<meta property="og:description" content="Frame any deep-sky target with several rigs at once, see tonight's best targets for your gear, and check seeing, cloud and wind.">
+<meta property="og:url" content="https://fovplanner.com/">
+<meta property="og:image" content="https://fovplanner.com/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"FOV Planner","url":"https://fovplanner.com/","applicationCategory":"UtilitiesApplication","operatingSystem":"Any (web browser)","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"description":"Astrophotography planner: field-of-view simulator for several telescope and camera combinations at once, tonight's best deep-sky targets for your equipment, mosaic planning, filter suggestions, seeing, cloud, wind and light-pollution forecasts, comets and a plate-solved image gallery."}</script>
 <style>
   :root {
     --bg: #0b0e14; --panel: #121722; --panel-2: #182030; --line: #263043;
@@ -55,6 +65,8 @@
   .rig { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 8px; padding: 9px; background: var(--panel-2); display: flex; flex-direction: column; gap: 7px; }
   .rig + .rig { margin-top: 8px; }
   .rig.off { opacity: .55; }
+  details.about > summary { font-size: 11.5px; color: var(--muted); cursor: pointer; margin-top: 2px; }
+  details.about p { margin: 6px 0; line-height: 1.5; }
   .weekbox { margin: 4px 0 10px; }
   .weekbox > summary { cursor: pointer; list-style: none; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
   .weekbox > summary::-webkit-details-marker { display: none; }
@@ -264,6 +276,10 @@
     <div>
       <h1>Multi-Rig FOV Planner</h1>
       <div class="sub">Compare all your telescope + camera combos on one target. Drag the sky to compose.</div>
+      <details class="about"><summary>About</summary><div class="note">
+        <p><b>FOV Planner</b> is a free astrophotography planning tool. Search any galaxy, nebula, cluster, supernova remnant or dark nebula (Messier, NGC, IC, Sharpless, Lynds LDN/LBN, Barnard) and overlay the field of view of every telescope and camera you own at the same time, with rotation, reducers and mosaics.</p>
+        <p>It lists tonight's best deep-sky targets for your own gear, hides targets that are too small for your rigs, plans mosaics for large ones and suggests narrowband, dual-band or broadband filters. Conditions include a 7-night cloud outlook, a seeing estimate in arcseconds, wind against your telescope's limit, dew, transparency, the Moon and your Bortle class from the light-pollution atlas. Comets, a dust map for dark nebulae and a gallery of plate-solved images complete it.</p>
+      </div></details>
     </div>
     <nav id="tabs" role="tablist" aria-label="Sections">
       <button type="button" role="tab" data-go="frame"><span class="ti">⌖</span><span>Frame</span></button>
