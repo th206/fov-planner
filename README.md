@@ -48,6 +48,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 
 - Any place: search by name or coordinates, use your device location, and save one place as the default
 - **Sky brightness and Bortle class** for the location, from the Light Pollution Atlas, with an alert above Bortle 5
+- **7-night outlook** in the style of Clear Outside: cloud for every hour 16:00–07:00, darkness and Moon bars, clear dark hours per night and the best night of the week; tap a night to open its detailed forecast
 - **Moon**: phase, illumination, rise/set, next Full and New Moon, and a two-week strip — tap a night to plan it
 - **Wind for guiding**: give each telescope a wind limit under Equipment (an estimate from its size is used until you do). The forecast marks every hour ✓ / ~ / ✕ for each telescope in use, and the summary says how many dark hours each one can guide through
 - Gusts are the strongest of four forecasts (chosen model plus ECMWF, ICON and GFS); wind at 80–120 m warns when gusts may come down to a "calm" ground

@@ -55,6 +55,23 @@
   .rig { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 8px; padding: 9px; background: var(--panel-2); display: flex; flex-direction: column; gap: 7px; }
   .rig + .rig { margin-top: 8px; }
   .rig.off { opacity: .55; }
+  .weekbox { margin: 4px 0 10px; }
+  .weekbox > summary { cursor: pointer; list-style: none; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+  .weekbox > summary::-webkit-details-marker { display: none; }
+  .weekttl { color: var(--text); font-weight: 600; } .weekttl::before { content: '▸ '; color: var(--muted); } .weekbox[open] .weekttl::before { content: '▾ '; }
+  .wk-row { display: grid; grid-template-columns: 64px 1fr; gap: 6px; align-items: stretch; padding: 3px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
+  .wk-row:hover { border-color: var(--line); } .wk-row.sel { border-color: var(--accent); background: var(--panel-2); }
+  .wk-day { font-size: 11px; line-height: 1.25; color: var(--muted); display: flex; flex-direction: column; justify-content: center; }
+  .wk-day b { color: var(--text); font-size: 12px; }
+  .wk-hours { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 1px; }
+  .wk-h { font-size: 9px; text-align: center; padding: 3px 0; border-radius: 2px; color: rgba(0,0,0,.65); font-variant-numeric: tabular-nums; }
+  .wk-h.g { background: #3fb950; } .wk-h.w { background: #e3a63b; } .wk-h.b { background: #e5534b; } .wk-h.n { background: var(--panel-2); color: var(--muted); }
+  .wk-sun, .wk-moon { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); }
+  .wk-sun { height: 5px; margin-top: 2px; } .wk-moon { height: 3px; margin-top: 1px; }
+  .wk-sun span.d { background: #000; } .wk-sun span.t { background: #2f5fa8; } .wk-sun span.s { background: #d9c45a; }
+  .wk-key { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; }
+  .wk-key.g { background: #3fb950; } .wk-key.w { background: #e3a63b; } .wk-key.b { background: #e5534b; }
+  .wk-sum { font-size: 10px; color: var(--muted); white-space: nowrap; }
   .galgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; }
   .galitem { position: relative; padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel-2); cursor: pointer; text-align: left; color: var(--text); font: inherit; }
   .galitem:hover, .galitem:focus { border-color: var(--accent); outline: none; }
@@ -220,7 +237,8 @@
     #app:not([data-tab="frame"]) main { display: none; }
     #app[data-tab="frame"] main { position: sticky; top: 0; z-index: 5; }
     #tabs { position: fixed; top: auto; bottom: 0; left: 0; right: 0; margin: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); z-index: 60; }
-    #tabs button { flex-direction: column; gap: 1px; font-size: 11px; padding: 5px 2px; border: none; background: none; }
+    #tabs { gap: 2px; padding-left: 4px; padding-right: 4px; }
+    #tabs button { flex-direction: column; gap: 1px; font-size: 10.5px; padding: 5px 0; border: none; background: none; min-width: 0; }
     #tabs button[aria-selected="true"] { background: var(--panel-2); color: var(--accent); }
     #tabs .ti { font-size: 18px; }
     #app:not([data-tab="frame"]) aside .sub { display: none; }
@@ -360,6 +378,12 @@
       </div>
       <div class="moonbox"><span id="moonIcon"></span><div class="mtext" id="moonText"></div></div>
       <div class="moonstrip" id="moonStrip" aria-label="Moon over the next two weeks — tap a night to plan it"></div>
+      <details id="weekBox" class="weekbox" open>
+        <summary><span class="weekttl">7-night outlook</span> <span class="note" id="weekNote"></span></summary>
+        <div id="week"></div>
+        <div class="wxnote">Each square is one hour, 16:00–07:00 local. <span class="wk-key g"></span> mostly clear <span class="wk-key w"></span> partly cloudy <span class="wk-key b"></span> cloudy or rain.
+          Bar under the hours: <b style="color:var(--text)">black</b> = astronomical darkness, blue = twilight; the thin line shows the Moon up (brighter = fuller). Tap a night to open it below.</div>
+      </details>
       <div class="row wxmodel"><label class="note" title="Which weather model drives the forecast table and the seeing estimate">Forecast model
         <select id="wxModel">
           <option value="best_match">Best match (auto)</option>
@@ -1948,6 +1972,7 @@ async function loadWeather() {
   const q = `latitude=${lat}&longitude=${lon}&timezone=GMT&start_date=${day(t0)}&end_date=${day(t1)}`;
   renderWxLinks();
   loadObs();
+  loadWeek();
   if ($('#t7').open) load7Timer();
   $('#wxSum').innerHTML = '<span class="note">Loading forecast…</span>'; $('#wx').innerHTML = ''; $('#verdict').innerHTML = 'Loading the forecast…';
   try {
@@ -2009,6 +2034,64 @@ function seeingAt(W, ms, elev) {
   const main = Object.entries(parts).sort((x, y) => y[1] - x[1])[0][0];
   return { total: Math.min(6, fwhm(sum)), free: freeSum > 0 ? Math.min(6, fwhm(freeSum)) : 0, main, share: parts[main] / sum };
 }
+/* ---------- 7-night outlook (Clear Outside style): cloud per hour, darkness and Moon, tap a night to open it ---------- */
+let weekKey = '', weekAt = 0, weekData = null;
+async function loadWeek(force) {
+  const { lat, lon } = state.site;
+  const key = `${lat},${lon},${state.wxModel}`;
+  if (!force && key === weekKey && Date.now() - weekAt < 30 * 60e3) { renderWeek(); return; }
+  weekKey = key; weekAt = Date.now();
+  $('#week').innerHTML = '<span class="note">Loading the week…</span>';
+  try {
+    const j = await fetchJson(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&timezone=GMT&forecast_days=9&hourly=cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,precipitation_probability,precipitation,wind_gusts_10m,relative_humidity_2m&models=${state.wxModel}`);
+    if (key !== weekKey) return;
+    weekData = j; renderWeek();
+  } catch (e) { weekAt = 0; $('#week').innerHTML = `<span class="note">${esc(e.message)}</span>`; }
+}
+function renderWeek() {
+  if (!weekData) return;
+  const W = hourlyLookup(weekData), { lat, lon, tz } = state.site;
+  const sel = $('#night').value, rows = [];
+  const today = new Date(Date.now() + tz * 3600e3).toISOString().slice(0, 10);
+  let best = null;
+  for (let d = 0; d < 7; d++) {
+    const date = new Date(Date.parse(today + 'T12:00:00Z') + d * 864e5).toISOString().slice(0, 10);
+    const [y, mo, dd] = date.split('-').map(Number);
+    const t0 = Math.floor((Date.UTC(y, mo - 1, dd, 16) - tz * 3600e3) / 3600e3) * 3600e3;
+    const n = 16, cells = [], sun = [], moon = [];
+    let darkClear = 0, darkN = 0;
+    const ph = moonPhase(t0 + 8 * 3600e3);
+    for (let k = 0; k < n; k++) {
+      const ms = t0 + k * 3600e3, mid = ms + 1800e3;
+      const [sr, sd] = sunRaDec(mid), sa = altAz(sr, sd, mid, lat, lon);
+      const [mr, md] = moonRaDec(mid), ma = altAz(mr, md, mid, lat, lon);
+      const cl = W('cloud_cover', ms), rp = W('precipitation_probability', ms), mm = W('precipitation', ms), gu = W('wind_gusts_10m', ms);
+      const lh = new Date(ms + tz * 3600e3).getUTCHours();
+      const cls = cl == null ? 'n' : (cl >= 60 || (rp ?? 0) >= 50 || (mm ?? 0) >= 0.2) ? 'b' : (cl >= 25 || (rp ?? 0) >= 20) ? 'w' : 'g';
+      const tip = cl == null ? 'No data' : `${String(lh).padStart(2, '0')}:00 · cloud ${Math.round(cl)}% (low ${Math.round(W('cloud_cover_low', ms) ?? 0)} · mid ${Math.round(W('cloud_cover_mid', ms) ?? 0)} · high ${Math.round(W('cloud_cover_high', ms) ?? 0)})`
+        + `${rp != null ? ` · rain ${Math.round(rp)}%` : ''}${gu != null ? ` · gusts ${Math.round(gu)} km/h` : ''}${W('relative_humidity_2m', ms) != null ? ` · RH ${Math.round(W('relative_humidity_2m', ms))}%` : ''}`;
+      cells.push(`<span class="wk-h ${cls}" title="${tip}">${String(lh).padStart(2, '0')}</span>`);
+      sun.push(`<span class="${sa < -18 ? 'd' : sa < 0 ? 't' : 's'}"></span>`);
+      moon.push(`<span style="background:${ma > 0 ? `rgba(230,230,230,${(0.25 + 0.75 * ph.illum).toFixed(2)})` : 'transparent'}"></span>`);
+      if (sa < -18 && cl != null) { darkN++; if (cls === 'g') darkClear++; }
+    }
+    const label = new Date(date + 'T12:00Z').toLocaleDateString(undefined, { weekday: 'short' });
+    const sum = darkN ? `${darkClear}/${darkN} h clear` : 'no data';
+    if (darkN && (!best || darkClear > best.c)) best = { c: darkClear, label, date };
+    rows.push(`<div class="wk-row ${date === sel ? 'sel' : ''}" data-date="${date}" role="button" tabindex="0" title="Open this night">
+      <div class="wk-day"><b>${d === 0 ? 'Tonight' : esc(label)}</b>${dd}/${mo} · ${Math.round(ph.illum * 100)}%<span class="wk-sum">${sum}</span></div>
+      <div class="wk-hours" style="--n:${n}">${cells.join('')}<div class="wk-sun" style="--n:${n}">${sun.join('')}</div><div class="wk-moon" style="--n:${n}">${moon.join('')}</div></div>
+    </div>`);
+  }
+  $('#week').innerHTML = rows.join('');
+  $('#weekNote').textContent = best && best.c ? `· best: ${best.label} (${best.c} clear dark h)` : best ? '· no clear dark hours this week' : '';
+}
+$('#week').addEventListener('click', (e) => {
+  const r = e.target.closest('[data-date]'); if (!r) return;
+  $('#night').value = r.dataset.date; $('#night').dispatchEvent(new Event('change'));
+  track('week/open');
+});
+
 /* ---------- Tonight at a glance: one line per rig, best clear window ---------- */
 function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
   const box = $('#verdict'); if (!box) return;
@@ -2946,7 +3029,7 @@ for (const k of ['lat', 'lon', 'tz']) {
 }
 { const now = new Date(Date.now() + state.site.tz * 3600e3); $('#night').value = now.toISOString().slice(0, 10); }
 $('#night').addEventListener('change', () => { drawAltChart(); loadWeather(); scheduleTonight(); renderMoon(); renderRigStats(); });
-$('#wxReload').addEventListener('click', () => { loadObs(true); loadWeather(); if ($('#t7').open) load7Timer(); });
+$('#wxReload').addEventListener('click', () => { loadObs(true); loadWeek(true); loadWeather(); if ($('#t7').open) load7Timer(); });
 function load7Timer() {
   const { lat, lon } = state.site;
   const q = `lon=${lon.toFixed(3)}&lat=${lat.toFixed(3)}&ac=0&unit=metric&tzshift=0`;
