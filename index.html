@@ -74,6 +74,7 @@
   .oagbox > summary { font-size: 12px; color: var(--muted); cursor: pointer; }
   .oagbox[open] { border-top: 1px solid var(--line); padding-top: 6px; }
   .oagbox .row { margin-top: 6px; } .oagres { margin-top: 6px; line-height: 1.6; }
+  .oagcal { margin-top: 8px; } .oagcal > summary { font-size: 12px; color: var(--accent); cursor: pointer; } .oagcal label { display: flex; gap: 6px; align-items: center; flex: 1; font-size: 12px; }
   .cmpwrap { overflow-x: auto; }
   table.cmp { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
   table.cmp th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11px; padding: 3px 4px; white-space: nowrap; }
@@ -1827,14 +1828,21 @@ function renderRigs() {
       <details class="oagbox" ${r.oag?.on ? 'open' : ''}><summary>Off-axis guider ${r.oag?.on ? '<span class="tag good">on</span>' : ''}</summary>
         <div class="row"><label><input type="checkbox" data-k="oag.on" ${r.oag?.on ? 'checked' : ''}> Use an off-axis guider on this rig</label></div>
         <div class="row">
-          <label title="Size of the pick-off prism">Prism <input class="num" style="width:44px" type="number" min="2" max="20" step="0.5" data-k="oag.w" value="${r.oag?.w ?? 8}"> × <input class="num" style="width:44px" type="number" min="2" max="20" step="0.5" data-k="oag.h" value="${r.oag?.h ?? 8}"> mm</label>
+          <label title="Size of the pick-off prism (check your OAG's spec sheet). If a guide camera is chosen, the smaller of prism and guide sensor is used">Prism <input class="num" style="width:44px" type="number" min="2" max="20" step="0.5" data-k="oag.w" value="${r.oag?.w ?? 8}"> × <input class="num" style="width:44px" type="number" min="2" max="20" step="0.5" data-k="oag.h" value="${r.oag?.h ?? 8}"> mm</label>
           <label title="Distance from the centre of the main sensor to the centre of the prism">Offset <input class="num" style="width:50px" type="number" min="3" max="40" step="0.5" data-k="oag.off" value="${r.oag?.off ?? oagDefaultOff(r)}"> mm</label>
         </div>
         <div class="row">
-          <label title="Which side of the main sensor the prism sits on (as the frame appears at rotation 0)">Prism side <select data-k="oag.pa">${[[0, 'top'], [90, 'right'], [180, 'bottom'], [270, 'left']].map(([v, l]) => `<option value="${v}" ${(r.oag?.pa ?? 0) == v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label title="Direction of the prism from the sensor centre, as the frame appears at rotation 0: 0 = top, 90 = right, 180 = bottom, 270 = left (any angle works; calibration sets it exactly)">Prism angle <input class="num" style="width:56px" type="number" min="0" max="359.9" step="0.5" data-k="oag.pa" value="${+(r.oag?.pa ?? 0).toFixed(1)}" list="oagSides">°</label>
+          <datalist id="oagSides"><option value="0" label="top"><option value="90" label="right"><option value="180" label="bottom"><option value="270" label="left"></datalist>
           <label>Guide camera <select data-k="oag.cam"><option value="">—</option>${state.cams.map((c) => `<option value="${c.id}" ${r.oag?.cam === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
         </div>
         <div class="note oagres" data-oag></div>
+        <details class="oagcal"><summary>Calibrate from two plate solves</summary>
+          <div class="note">First set this rig's <b>Rotation</b> to your camera's plate-solved angle. Then, with the mount still, plate-solve one main-camera frame and one guide-camera frame and paste both centres (RA Dec, e.g. <code>01 59 19.6 +19 00 27</code> or <code>29.83 19.01</code>).</div>
+          <div class="row"><label>Main centre <input data-oagcal="main" placeholder="RA Dec" style="flex:1;min-width:0"></label></div>
+          <div class="row"><label>Guide centre <input data-oagcal="guide" placeholder="RA Dec" style="flex:1;min-width:0"></label></div>
+          <div class="row"><button type="button" class="icon" data-act="oagcal">Calibrate</button><span class="note" data-oagcalmsg></span></div>
+        </details>
       </details>
       <div class="stats" data-stats></div>
       </div>
@@ -1907,7 +1915,9 @@ function oagGeom(r, g, rotDeg) {                         // prism centre and hal
   const o = r.oag, fl = g.fl, pa = ((o.pa || 0) * D2R);
   const ox = (o.off / fl) * Math.sin(pa), oy = (o.off / fl) * Math.cos(pa);
   const th = (rotDeg ?? r.rot ?? 0) * D2R;
-  return { c: rot([ox, oy], th), hx: (o.w / 2) / fl, hy: (o.h / 2) / fl, th };
+  // the guide camera sees the smaller of the prism and its own sensor
+  const gc = o.cam && camById(o.cam), gw = gc ? Math.min(o.w, gc.wpx * gc.px / 1000) : o.w, gh = gc ? Math.min(o.h, gc.hpx * gc.px / 1000) : o.h;
+  return { c: rot([ox, oy], th), hx: (gw / 2) / fl, hy: (gh / 2) / fl, th };
 }
 function oagPolygon(r, g, ra0, dec0) {
   if (r.cols * r.rows > 1) return null;
@@ -3684,6 +3694,24 @@ $('#rigs').addEventListener('click', (e) => {
   const el = b.closest('.rig'), r = state.rigs.find((x) => x.id === el.dataset.id); if (!r) return;
   r.filter = b.dataset.fid; el.querySelector('[data-k=filter]').value = r.filter;
   saveStore(); renderRigStats(); scheduleTonight(); track('filter-use');
+});
+$('#rigs').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-act=oagcal]'); if (!b) return;
+  const el = b.closest('.rig'), r = state.rigs.find((x) => x.id === el.dataset.id), g = r && rigGeom(r); if (!g) return;
+  const say = (t) => { el.querySelector('[data-oagcalmsg]').innerHTML = t; };
+  const m = parseCoords(el.querySelector('[data-oagcal=main]').value || ''), q = parseCoords(el.querySelector('[data-oagcal=guide]').value || '');
+  if (!m || !q) { say('Enter both centres as RA Dec.'); return; }
+  const sep = angSep(m.ra, m.dec, q.ra, q.dec);                                        // degrees
+  const [xi, eta] = proj(m.ra, m.dec, q.ra, q.dec);
+  const paSky = ((Math.atan2(xi, eta) * R2D) % 360 + 360) % 360;                       // east of north
+  const off = Math.tan(sep * D2R) * g.fl;                                                // mm in the focal plane
+  if (off > 60) { say(`Those centres are ${sep.toFixed(2)}° apart — too far for an off-axis guider. Check that both solves were taken at the same pointing.`); return; }
+  r.oag = { on: true, w: 8, h: 8, cam: '', ...(r.oag || {}), off: +off.toFixed(1), pa: +((((paSky - (r.rot || 0)) % 360) + 360) % 360).toFixed(1) };
+  saveStore(); renderRigs(); drawFrames(); scheduleOag(true); track('oag/calibrate');
+  const el2 = document.querySelector(`.rig[data-id="${r.id}"]`);
+  el2?.classList.add('open'); el2?.querySelector('.oagbox')?.setAttribute('open', '');
+  const msg2 = el2?.querySelector('[data-oagcalmsg]'); if (msg2) msg2.innerHTML = `Done: prism ${off.toFixed(1)} mm from the centre at ${r.oag.pa}° (sky position angle ${paSky.toFixed(1)}°).`;
+  el2?.querySelector('.oagcal')?.setAttribute('open', '');
 });
 $('#rigs').addEventListener('click', (e) => {
   const tg = e.target.closest('[data-act=toggle]'); if (!tg) return;
