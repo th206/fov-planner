@@ -499,7 +499,8 @@
       <div class="row"><label style="flex:1">Rig <select id="optRig" style="flex:1"></select></label>
         <button class="icon" id="optPick" onclick="document.getElementById('optFile').click()">Choose FITS sub…</button></div>
       <input type="file" id="optFile" hidden accept=".fit,.fits,.fts">
-      <div class="note" id="optMsg">Pick one <b>raw, unstretched</b> FITS sub (not a stack, 30 s or longer, in focus, plenty of stars). It is analysed on this device and not uploaded.</div>
+      <div class="note" id="optMsg">Pick one <b>raw, unstretched</b> FITS sub (not a stack, 30 s or longer, in focus, plenty of stars). It is analysed on this device and not uploaded.<br>
+        <span style="opacity:.85">Setting up an off-axis guider? That is on the rig itself: Frame tab → open the rig → Off-axis guider → Calibrate.</span></div>
       <div id="optOut" hidden>
         <canvas id="optPlot" class="optplot"></canvas>
         <div class="note">Each line is a star: its length shows how stretched it is, its angle which way. Squares show the median star size in each part of the frame.</div>
