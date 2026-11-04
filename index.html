@@ -1818,7 +1818,7 @@ function renderRigs() {
         <select data-k="filter" aria-label="Filter"><option value="">No filter / not set</option>${(state.filters || []).map((f) => `<option value="${f.id}" ${f.id === r.filter ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select>
       </div>
       <div class="row">
-        <label style="flex:1">Rotation <input type="range" min="0" max="180" step="1" data-k="rot" value="${r.rot}"></label>
+        <label style="flex:1">Rotation <input type="range" min="0" max="359" step="1" data-k="rot" value="${r.rot}"></label>
         <span class="note" data-rotv style="width:34px;text-align:right">${r.rot}°</span>
       </div>
       <div class="row">
@@ -1843,6 +1843,8 @@ function renderRigs() {
           <div class="row"><label>Main centre <input data-oagcal="main" placeholder="RA Dec" style="flex:1;min-width:0"></label></div>
           <div class="row"><label>Guide centre <input data-oagcal="guide" placeholder="RA Dec" style="flex:1;min-width:0"></label></div>
           <div class="row"><button type="button" class="icon" data-act="oagcal">Calibrate</button><span class="note" data-oagcalmsg></span></div>
+          <div class="note" style="margin-top:8px">Or use plate-solved files: select the <b>main</b> and the <b>guide</b> camera's solved FITS together (a FITS with WCS in its header, or astrometry.net's <code>wcs.fits</code> / ASTAP's <code>.wcs</code>). The planner reads both centres and the main camera's rotation itself. One main file alone just sets the rotation.</div>
+          <div class="row"><button type="button" class="icon" data-act="oagfiles">Choose solved files…</button><input type="file" data-oagfiles multiple hidden accept=".fit,.fits,.fts,.wcs,.ini,.txt"></div>
         </details>
       </details>
       <div class="stats" data-stats></div>
@@ -1969,8 +1971,7 @@ async function updateOag() {
       : `${tagH('bad', 'no guide star')} no Gaia star brighter than G 15 in the prism`;
     if (!good) {
       let best = null;
-      for (let a = 0; a < 180; a += 5) { const st = inside(a)[0]; if (st && (!best || st.g < best.g)) best = { a, g: st.g }; }
-      // the prism side can also be flipped (180°): rotating the camera by a+180 keeps the main framing orientation
+      for (let a = 0; a < 360; a += 5) { const st = inside(a)[0]; if (st && (!best || st.g < best.g)) best = { a, g: st.g }; }
       if (best && best.g < (now[0]?.g ?? 99) - 0.5) verdict += ` · rotate the camera to <b>${best.a}°</b> for a G ${best.g.toFixed(1)} star`;
     }
     if (gscale) verdict += ` · guide scale ${gscale.toFixed(2)}″/px`;
@@ -3695,6 +3696,44 @@ $('#rigs').addEventListener('click', (e) => {
   const el = b.closest('.rig'), r = state.rigs.find((x) => x.id === el.dataset.id); if (!r) return;
   r.filter = b.dataset.fid; el.querySelector('[data-k=filter]').value = r.filter;
   saveStore(); renderRigStats(); scheduleTonight(); track('filter-use');
+});
+$('#rigs').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-act=oagfiles]'); if (b) b.closest('.rig').querySelector('[data-oagfiles]').click();
+});
+$('#rigs').addEventListener('change', async (e) => {
+  const inp = e.target.closest('[data-oagfiles]'); if (!inp || !inp.files?.length) return;
+  const el = inp.closest('.rig'), r = state.rigs.find((x) => x.id === el.dataset.id), g = r && rigGeom(r); if (!g) return;
+  const say = (t) => { el.querySelector('[data-oagcalmsg]').innerHTML = t; };
+  const sols = [];
+  for (const f of inp.files) {
+    const h = parseFitsHeader(await f.slice(0, 2880 * 40).arrayBuffer());
+    const w0 = linearWcs(h);
+    const W = h.IMAGEW || h.NAXIS1, H = h.IMAGEH || h.NAXIS2;
+    if (!w0 || !W || !H) { sols.push({ f, bad: true }); continue; }
+    const w = { ...w0, w: W, h: H };
+    const [ra, dec] = pix2sky(w, (W + 1) / 2, (H + 1) / 2);
+    const scale = Math.hypot(w.cd[0], w.cd[2]) * 3600;
+    // rotation = position angle of the sensor's short side (the +y pixel axis for a landscape sensor), east of north
+    const ax = W >= H ? [w.cd[1], w.cd[3]] : [w.cd[0], w.cd[2]];
+    const rotDeg = ((Math.atan2(ax[0], ax[1]) * R2D) % 360 + 360) % 360;   // full circle: the prism makes the two halves different
+    sols.push({ f, ra, dec, scale, rotDeg, W, H });
+  }
+  inp.value = '';
+  const good = sols.filter((x) => !x.bad);
+  if (!good.length) { say('No plate solution in these files. Solve them first (ASIAIR’s FITS usually don’t include one): upload to nova.astrometry.net and use its <code>wcs.fits</code>, or type the centres from ASIAIR above.'); return; }
+  // main = the one whose pixel scale is closest to this rig's (the guide camera usually differs), else the larger image
+  const ms = g.scale, gs = r.oag?.cam && camById(r.oag.cam) ? 206.265 * camById(r.oag.cam).px / g.fl : null;
+  good.sort((a, b) => (gs ? Math.abs(Math.log(a.scale / ms)) - Math.abs(Math.log(b.scale / ms)) : b.W * b.H - a.W * a.H));
+  const main = good[0], guide = good[1];
+  r.rot = Math.round(main.rotDeg);
+  el.querySelector('[data-oagcal=main]').value = `${main.ra.toFixed(5)} ${main.dec >= 0 ? '+' : ''}${main.dec.toFixed(5)}`;
+  if (guide) el.querySelector('[data-oagcal=guide]').value = `${guide.ra.toFixed(5)} ${guide.dec >= 0 ? '+' : ''}${guide.dec.toFixed(5)}`;
+  saveStore();
+  const rr = el.querySelector('[data-k=rot]'); if (rr) { rr.value = r.rot; el.querySelector('[data-rotv]').textContent = `${r.rot}°`; }
+  drawFrames(); renderRigStats();
+  if (guide) el.querySelector('[data-act=oagcal]').click();
+  else say(`Rotation set to ${r.rot}° from ${esc(main.f.name)}. Add the guide camera’s solved file to calibrate the prism.`);
+  track('oag/files');
 });
 $('#rigs').addEventListener('click', (e) => {
   const b = e.target.closest('[data-act=oagcal]'); if (!b) return;
