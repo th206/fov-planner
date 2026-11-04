@@ -14,6 +14,8 @@ export default {
     try {
       if (p === '/api/gallery' || p.startsWith('/api/gallery/')) return await galleryApi(req, env, url);
       if (p.startsWith('/g/')) return await serveFile(req, env, p.slice(1));
+      if (p === '/api/solve' || p.startsWith('/api/solve/')) return await solveApi(req, env, url);
+      if (p.startsWith('/t/')) return await serveTemp(env, p.slice(3));
     } catch (e) {
       return json({ error: e.message || String(e) }, e.status || 500);
     }
@@ -136,6 +138,54 @@ async function galleryApi(req, env, url) {
     return json({ status: 'solved', wcs });
   }
   fail('Not found.', 404);
+}
+
+// ---- Stand-alone plate solving (e.g. OAG calibration frames): image kept only until it is solved ----
+async function solveApi(req, env, url) {
+  if (!env.GALLERY) fail('Storage (R2 bucket) is not connected.', 503);
+  if (!(await authorised(req, env))) fail('Plate solving is for the site owner: unlock uploads under Gallery first.', 401);
+  if (!env.ASTROMETRY_KEY) fail('Plate solving is not set up (ASTROMETRY_KEY secret missing).', 503);
+  const id = url.pathname.split('/')[3];
+  if (req.method === 'POST' && !id) {
+    const form = await req.formData();
+    const image = form.get('image'); if (!image || typeof image === 'string') fail('No image received.');
+    if (image.size > MAX_IMAGE) fail('Image is too large.');
+    const hints = JSON.parse(form.get('hints') || '{}');
+    const tid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    await env.GALLERY.put(`tmp/${tid}.jpg`, await image.arrayBuffer(), { httpMetadata: { contentType: 'image/jpeg' } });
+    const session = await novaLogin(env);
+    const rq = { session, url: `${url.origin}/t/${tid}.jpg`, allow_commercial_use: 'n', allow_modifications: 'n', publicly_visible: 'n', downsample_factor: 2 };
+    if (isFinite(hints.scale_lower) && isFinite(hints.scale_upper)) Object.assign(rq, { scale_units: 'arcsecperpix', scale_type: 'ul', scale_lower: +hints.scale_lower, scale_upper: +hints.scale_upper });
+    if (isFinite(hints.ra) && isFinite(hints.dec)) Object.assign(rq, { center_ra: +hints.ra, center_dec: +hints.dec, radius: isFinite(hints.radius) ? +hints.radius : 5 });
+    const j = await (await fetch(`${NOVA}/api/url_upload`, { method: 'POST', body: new URLSearchParams({ 'request-json': JSON.stringify(rq) }) })).json();
+    if (j.status !== 'success') { await env.GALLERY.delete(`tmp/${tid}.jpg`); fail('astrometry.net did not accept the image: ' + (j.errormessage || 'unknown error'), 502); }
+    await env.GALLERY.put(`tmp/${tid}.json`, JSON.stringify({ subid: j.subid, started: Date.now() }), { httpMetadata: { contentType: 'application/json' } });
+    return json({ id: tid, status: 'solving' });
+  }
+  if (req.method === 'GET' && id && /^[a-z0-9]+$/.test(id)) {
+    const o = await env.GALLERY.get(`tmp/${id}.json`); if (!o) fail('Unknown or finished job.', 404);
+    const st = await o.json();
+    const cleanup = () => env.GALLERY.delete([`tmp/${id}.jpg`, `tmp/${id}.json`]);
+    const sj = await (await fetch(`${NOVA}/api/submissions/${st.subid}`)).json();
+    const jobId = (sj.jobs || []).find((x) => x != null);
+    if (!jobId) {
+      if (Date.now() - st.started > 20 * 60e3) { await cleanup(); return json({ status: 'failed', why: 'timed out' }); }
+      return json({ status: 'solving', stage: 'queued' });
+    }
+    const jj = await (await fetch(`${NOVA}/api/jobs/${jobId}/info`)).json();
+    if (jj.status !== 'success' && jj.status !== 'failure') return json({ status: 'solving', stage: 'solving' });
+    if (jj.status !== 'success') { await cleanup(); return json({ status: 'failed' }); }
+    const hdr = parseFitsHeader(await (await fetch(`${NOVA}/wcs_file/${jobId}`)).arrayBuffer());
+    const wcs = linearWcs(hdr);
+    await cleanup();
+    return wcs ? json({ status: 'solved', wcs }) : json({ status: 'failed', why: 'no WCS' });
+  }
+  fail('Not found.', 404);
+}
+async function serveTemp(env, key) {
+  if (!env.GALLERY || !/^[a-z0-9]+\.jpg$/.test(key)) return new Response('Not found', { status: 404 });
+  const o = await env.GALLERY.get('tmp/' + key);
+  return o ? new Response(o.body, { headers: { 'content-type': 'image/jpeg', 'cache-control': 'no-store' } }) : new Response('Not found', { status: 404 });
 }
 
 async function novaLogin(env) {
