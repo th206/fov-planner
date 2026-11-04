@@ -1182,6 +1182,7 @@ let imgTimer;
 const scheduleImageRefresh = () => { clearTimeout(imgTimer); imgTimer = setTimeout(() => refreshImageLayers(false), 400); };
 async function renderImageList() {
   try { imgCache = (await imgAll()).sort((a, b) => b.added - a.added); } catch { imgCache = []; $('#imgMsg').textContent = 'This browser is blocking local storage, so images cannot be saved.'; }
+  scheduleTonight();
   $('#imgList').innerHTML = imgCache.map((r) => `
     <div class="img-row" data-id="${r.id}">
       <div class="top">
@@ -1455,12 +1456,14 @@ function tonightSetup() {
   $('#tnTypes').innerHTML = GROUPS.map(([k, l]) => `<button type="button" class="chip ${o.types.includes(k) ? 'on' : ''}" data-g="${k}">${l}</button>`).join('');
   $('#tnMinAlt').value = o.minAlt; $('#tnMinFill').value = o.minFill; $('#tnMaxPanels').value = o.maxPanels; $('#tnMoon').checked = o.avoidMoon; $('#tnSort').value = o.sort;
 }
-// Targets you have already imaged: named in one of your own gallery photos, or framed by one (object well inside and not tiny in it)
+// Targets *this viewer* has already imaged: their own photos only. The public gallery belongs to the site owner, so it
+// counts only on a device unlocked with the upload key; everyone's Private images (kept in their own browser) count for them.
 function doneIndex() {
-  const mine = (Array.isArray(galItems) ? galItems : []).filter((it) => it.kind !== 'ref');
+  const mine = galKey() ? (Array.isArray(galItems) ? galItems : []).filter((it) => it.kind !== 'ref') : [];
+  const priv = (Array.isArray(imgCache) ? imgCache : []).map((r) => ({ title: r.name, target: r.name, priv: true, fp: r.ra != null ? { ra: r.ra, dec: r.dec, radius: r.radius } : null }));
   const keys = new Map();
-  for (const it of mine) for (const n of [it.target, it.title]) if (n) keys.set(catKey(n), it);
-  const fps = mine.filter((it) => it.wcs && it.wcs.w).map((it) => ({ it, fp: imgFootprint(galWcs(it)) }));
+  for (const it of [...mine, ...priv]) for (const n of [it.target, it.title]) if (n) keys.set(catKey(n), it);
+  const fps = [...mine.filter((it) => it.wcs && it.wcs.w).map((it) => ({ it, fp: imgFootprint(galWcs(it)) })), ...priv.filter((p) => p.fp).map((p) => ({ it: p, fp: p.fp }))];
   return (c) => {
     for (const k of [c.id, c.name, ...(c.alt ? c.alt.split(' · ') : [])]) { if (k && keys.has(catKey(k))) return keys.get(catKey(k)); }
     for (const { it, fp } of fps) if (angSep(fp.ra, fp.dec, c.ra, c.dec) < fp.radius * 0.6 && c.maj / 60 >= fp.radius * 0.15) return it;
@@ -1565,7 +1568,7 @@ function renderTonight() {
       <div class="tn-l1"><b>${esc(c.id)}</b> <span class="tn-name">${esc(c.name || c.alt.split(' · ')[0] || '')}</span> ${fitTag}</div>
       <div class="tn-l2">${TYPE_NAMES[c.t] || c.t} · ${size}${c.mag != null ? ` · mag ${c.mag}` : ''} · <b>${hours.toFixed(1)} h</b> · max ${Math.round(peak)}° at ${hhmm(peakMs)}${it.moonSensitive && it.moonSep < 180 ? ` · Moon ${Math.round(it.moonSep)}°` : ''}</div>
       <div class="tn-l2">${rigLine}</div>
-      ${it.done ? `<div class="tn-l2"><span class="tag good">✓ imaged</span> already in your gallery: “${esc(it.done.title || it.done.target || '')}”${it.done.date ? ` (${esc(it.done.date)})` : ''} — ranked lower</div>` : ''}
+      ${it.done ? `<div class="tn-l2"><span class="tag good">✓ imaged</span> already in your ${it.done.priv ? 'private images' : 'gallery'}: “${esc(it.done.title || it.done.target || '')}”${it.done.date ? ` (${esc(it.done.date)})` : ''} — ranked lower</div>` : ''}
       ${best.swap ? `<div class="tn-l2"><span class="tag warn">swap filter</span> ${esc(filterById(best.r.filter)?.name || 'your filter')} blocks most of a ${TYPE_GROUP[c.t] === 'cl' ? 'cluster' : 'galaxy'}'s light — use ${swapAdvice(best.g)}</div>` : ''}
     </div>`;
   $('#tnCount').textContent = `${items.length} target${items.length === 1 ? '' : 's'}`;
@@ -2948,7 +2951,7 @@ $('#photosOn').addEventListener('change', (e) => { setPhotos(e.target.checked); 
 $('#photosOn').checked = state.galOverlay;
 $('#galOwner').addEventListener('click', async (e) => {
   e.preventDefault();
-  if (galKey()) { try { localStorage.removeItem('mrp.gkey'); } catch {} renderGallery(); return; }
+  if (galKey()) { try { localStorage.removeItem('mrp.gkey'); } catch {} renderGallery(); scheduleTonight(); return; }
   const k = (prompt('Gallery upload key (the UPLOAD_KEY you set in Cloudflare):') || '').trim(); if (!k) return;
   try {
     const r = await fetch(GAL_API + '/auth', { headers: { 'x-upload-key': k }, cache: 'no-store' });
@@ -2956,7 +2959,7 @@ $('#galOwner').addEventListener('click', async (e) => {
     try { localStorage.setItem('mrp.gkey', k); } catch {}
     $('#galMsg').textContent = 'Uploads unlocked on this device.';
   } catch { $('#galMsg').textContent = 'That key was not accepted.'; }
-  renderGallery();
+  renderGallery(); scheduleTonight();
 });
 
 // ---- add / edit dialog ----
