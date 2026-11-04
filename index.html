@@ -65,6 +65,20 @@
   .rig { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 8px; padding: 9px; background: var(--panel-2); display: flex; flex-direction: column; gap: 7px; }
   .rig + .rig { margin-top: 8px; }
   .rig.off { opacity: .55; }
+  .optplot { width: 100%; height: auto; border-radius: 8px; margin: 8px 0 4px; border: 1px solid var(--line); }
+  .satbox { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+  .satbox .row { gap: 6px; align-items: center; } .satbox select { max-width: 200px; }
+  .satstrip { display: flex; gap: 3px; flex-wrap: wrap; margin: 6px 0; }
+  .sat { display: inline-flex; flex-direction: column; align-items: center; min-width: 36px; padding: 2px 3px; border-radius: 4px; font-size: 10.5px; color: rgba(0,0,0,.7); }
+  .sat b { font-size: 10px; } .sat.g { background: #3fb950; } .sat.w { background: #e3a63b; } .sat.b { background: #e5534b; }
+  .oagbox > summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+  .oagbox[open] { border-top: 1px solid var(--line); padding-top: 6px; }
+  .oagbox .row { margin-top: 6px; } .oagres { margin-top: 6px; line-height: 1.6; }
+  .cmpwrap { overflow-x: auto; }
+  table.cmp { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  table.cmp th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11px; padding: 3px 4px; white-space: nowrap; }
+  table.cmp td { padding: 5px 4px; border-top: 1px solid var(--line); vertical-align: top; }
+  .cmpverdict p { margin: 8px 0 0; font-size: 12.5px; line-height: 1.5; }
   .coordtext { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; max-height: 50vh; overflow: auto; user-select: all; }
   #coordDlg { max-width: 620px; width: calc(100vw - 32px); }
   #sharedList .shr { display: flex; gap: 8px; align-items: center; font-size: 12.5px; padding: 4px 0; border-top: 1px solid var(--line); }
@@ -347,6 +361,16 @@
       </div>
     </section>
 
+    <section data-tab="frame" class="card" id="cmpCard" hidden>
+      <h2>Rig comparison <span class="note" id="cmpFor" style="text-transform:none;letter-spacing:0"></span></h2>
+      <div id="cmpTable"></div>
+      <div id="cmpVerdict" class="cmpverdict"></div>
+      <details class="info"><summary>ⓘ How this is worked out</summary><div class="wxnote">
+        <b>Detail</b> is the expected star size (FWHM) in your images: seeing, the telescope's diffraction limit and the pixel size added together (in quadrature), so a finer image scale stops helping once seeing dominates.
+        <b>Time</b> is how long each rig needs, relative to the fastest, for the same signal-to-noise on faint extended detail (it scales with the f-ratio squared; point-like detail favours bigger apertures instead).
+        <b>Px across</b> is how many pixels the target spans. Seeing comes from tonight's forecast on the target when "use forecast" is ticked under Gear, otherwise from your value there.</div></details>
+    </section>
+
     <section data-tab="tonight" class="card" id="verdictCard">
       <h2>Tonight at a glance <span class="note" id="verdictWhen"></span></h2>
       <div class="loadedbar" id="loadedBar"></div>
@@ -357,6 +381,14 @@
       <h2><span>Visibility <span class="note loadedname" id="visName"></span></span> <input id="night" type="date" aria-label="Night of"></h2>
       <canvas id="altChart" aria-label="Altitude of target through the night"></canvas>
       <div class="altsum" id="altSum"></div>
+      <div class="satbox">
+        <div class="row"><b style="font-size:12.5px">Satellite trails</b> <span class="note">for</span>
+          <input id="subLen" class="num" type="number" min="5" max="1800" step="5" style="width:60px"> <span class="note">s subs on</span> <select id="satRig"></select></div>
+        <div id="satOut" class="note"></div>
+        <details class="info"><summary>ⓘ How this is estimated</summary><div class="wxnote">A model, not a pass list: it spreads today's large constellations (about 9,000 Starlink near 550 km, OneWeb near 1,200 km, Kuiper near 630 km and a few thousand other bright satellites and rocket bodies) over their orbits,
+          checks whether satellites in the direction of your target are still lit by the Sun, and works out how many cross your field during one sub. Most trails appear in the hours after dusk and before dawn, when satellites are high in sunlight while you are in darkness; higher orbits stay lit longer.
+          Stacking with sigma clipping or a similar rejection removes nearly all trails.</div></details>
+      </div>
     </section>
 
 
@@ -460,6 +492,20 @@
         Images stay in this browser and show up whenever their part of the sky is in view.</div></details>
     </section>
 
+
+    <section data-tab="gear" class="card" id="opticsCard">
+      <h2>Optics check <span class="note" style="text-transform:none;letter-spacing:0">· tilt, spacing, tracking</span></h2>
+      <div class="row"><label style="flex:1">Rig <select id="optRig" style="flex:1"></select></label>
+        <button class="icon" id="optPick" onclick="document.getElementById('optFile').click()">Choose FITS sub…</button></div>
+      <input type="file" id="optFile" hidden accept=".fit,.fits,.fts">
+      <div class="note" id="optMsg">Pick one <b>raw, unstretched</b> FITS sub (not a stack, 30 s or longer, in focus, plenty of stars). It is analysed on this device and not uploaded.</div>
+      <div id="optOut" hidden>
+        <canvas id="optPlot" class="optplot"></canvas>
+        <div class="note">Each line is a star: its length shows how stretched it is, its angle which way. Squares show the median star size in each part of the frame.</div>
+        <div id="optVerdict" class="cmpverdict"></div>
+      </div>
+      <div id="optHist"></div>
+    </section>
 
     <section data-tab="gear" class="card" id="gearEq">
       <h2>Equipment <span class="row"><button class="icon" id="gearEqEdit">Edit equipment</button></span></h2>
@@ -632,7 +678,7 @@ function saveStore() {
   try {
     localStorage.setItem(KEY, JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, galOverlay: state.galOverlay,
+      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay,
     }));
   } catch { /* storage unavailable */ }
 }
@@ -649,6 +695,7 @@ const state = {
   useFcSeeing: saved.useFcSeeing ?? true,
   wxModel: saved.wxModel || 'best_match',
   dust: saved.dust || 'auto',
+  subLen: saved.subLen || 300,
   galOverlay: saved.galOverlay ?? true,
   windBias: null,
   filters: saved.filters || [],
@@ -773,6 +820,12 @@ function drawFrames() {
     const g = rigGeom(r); if (!g) continue;
     for (const poly of rigPolygons(r, g, ra0, dec0)) rigOv.add(A.polygon(poly, { color: r.color, lineWidth: 2 }));
   }
+  for (const r of state.rigs) {
+    if (!r.on || !r.oag?.on) continue;
+    const g = rigGeom(r); if (!g) continue;
+    const poly = oagPolygon(r, g, ra0, dec0); if (poly) rigOv.add(A.polygon(poly, { color: r.color, lineWidth: 1.5 }));
+  }
+  scheduleOag();
   shOv?.removeAll();
   if (sharedRigs.length && sharedCenter) for (const r of sharedRigs) { const g = rigGeom(r); if (g) for (const poly of rigPolygons(r, g, sharedCenter[0], sharedCenter[1])) shOv.add(A.polygon(poly, { color: r.color, lineWidth: 2 })); }
   updateLegend();
@@ -1771,10 +1824,22 @@ function renderRigs() {
           <input class="num" style="width:46px" type="number" min="1" max="10" data-k="rows" value="${r.rows}"></label>
         <label>overlap % <input class="num" style="width:50px" type="number" min="0" max="60" data-k="overlap" value="${r.overlap}"></label>
       </div>
+      <details class="oagbox" ${r.oag?.on ? 'open' : ''}><summary>Off-axis guider ${r.oag?.on ? '<span class="tag good">on</span>' : ''}</summary>
+        <div class="row"><label><input type="checkbox" data-k="oag.on" ${r.oag?.on ? 'checked' : ''}> Use an off-axis guider on this rig</label></div>
+        <div class="row">
+          <label title="Size of the pick-off prism">Prism <input class="num" style="width:44px" type="number" min="2" max="20" step="0.5" data-k="oag.w" value="${r.oag?.w ?? 8}"> × <input class="num" style="width:44px" type="number" min="2" max="20" step="0.5" data-k="oag.h" value="${r.oag?.h ?? 8}"> mm</label>
+          <label title="Distance from the centre of the main sensor to the centre of the prism">Offset <input class="num" style="width:50px" type="number" min="3" max="40" step="0.5" data-k="oag.off" value="${r.oag?.off ?? oagDefaultOff(r)}"> mm</label>
+        </div>
+        <div class="row">
+          <label title="Which side of the main sensor the prism sits on (as the frame appears at rotation 0)">Prism side <select data-k="oag.pa">${[[0, 'top'], [90, 'right'], [180, 'bottom'], [270, 'left']].map(([v, l]) => `<option value="${v}" ${(r.oag?.pa ?? 0) == v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label>Guide camera <select data-k="oag.cam"><option value="">—</option>${state.cams.map((c) => `<option value="${c.id}" ${r.oag?.cam === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+        </div>
+        <div class="note oagres" data-oag></div>
+      </details>
       <div class="stats" data-stats></div>
       </div>
     </div>`).join('');
-  renderRigStats();
+  renderRigStats(); opticsSetup();
 }
 function renderRigStats() {
   for (const el of document.querySelectorAll('.rig')) {
@@ -1828,10 +1893,211 @@ function renderRigStats() {
     box.innerHTML = `FOV <b>${fmtAngle(g.w)} × ${fmtAngle(g.h)}</b>${r.cols * r.rows > 1 ? ` · mosaic <b>${fmtAngle(g.mw)} × ${fmtAngle(g.mh)}</b>` : ''}<br>
       ${g.fl.toFixed(0)} mm${g.fr ? ` · f/${g.fr.toFixed(1)}` : ''} · <b>${g.scale.toFixed(2)}″/px</b> <span class="tag ${samp[0]}">${samp[1]}</span>${fit ? '<br>' + fit : ''}${vig ? '<br>' + vig : ''}${rec ? '<br>' + rec : ''}`;
   }
+  renderCompare();
+}
+/* ---------- Off-axis guider: prism footprint and Gaia guide stars ---------- */
+function oagDefaultOff(r) { const c = camById(r.cam); return c ? Math.round((c.hpx * c.px / 1000 / 2 + 2 + 4) * 2) / 2 : 14; }
+// forward gnomonic projection: [ra, dec] -> tangent plane (xi east, eta north, radians) about ra0, dec0
+function proj(ra0, dec0, ra, dec) {
+  const a0 = ra0 * D2R, d0 = dec0 * D2R, a = ra * D2R, d = dec * D2R;
+  const cosc = Math.sin(d0) * Math.sin(d) + Math.cos(d0) * Math.cos(d) * Math.cos(a - a0);
+  return [Math.cos(d) * Math.sin(a - a0) / cosc, (Math.cos(d0) * Math.sin(d) - Math.sin(d0) * Math.cos(d) * Math.cos(a - a0)) / cosc];
+}
+function oagGeom(r, g, rotDeg) {                         // prism centre and half-sizes on the tangent plane (radians)
+  const o = r.oag, fl = g.fl, pa = ((o.pa || 0) * D2R);
+  const ox = (o.off / fl) * Math.sin(pa), oy = (o.off / fl) * Math.cos(pa);
+  const th = (rotDeg ?? r.rot ?? 0) * D2R;
+  return { c: rot([ox, oy], th), hx: (o.w / 2) / fl, hy: (o.h / 2) / fl, th };
+}
+function oagPolygon(r, g, ra0, dec0) {
+  if (r.cols * r.rows > 1) return null;
+  const q = oagGeom(r, g);
+  return rectPoints(0, 0, q.hx, q.hy, 4).map((p) => rot(p, q.th)).map(([x, y]) => deproj(ra0, dec0, x + q.c[0], y + q.c[1]));
+}
+let oagTimer = null, oagCat = null;
+const oagCache = new Map();
+function scheduleOag(now) { clearTimeout(oagTimer); oagTimer = setTimeout(updateOag, now ? 50 : 900); }
+async function gaiaCone(ra, dec, radDeg, gmax) {
+  const key = `${ra.toFixed(2)},${dec.toFixed(2)},${radDeg.toFixed(2)},${gmax}`;
+  if (oagCache.has(key)) return oagCache.get(key);
+  const url = `https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=I/355/gaiadr3&-out=RA_ICRS,DE_ICRS,Gmag&-c=${encodeURIComponent(`${ra.toFixed(5)} ${dec >= 0 ? '+' : ''}${dec.toFixed(5)}`)}&-c.rd=${radDeg.toFixed(4)}&Gmag=${encodeURIComponent('<' + gmax)}&-out.max=2000&-oc.form=dec&-out.meta=-h-u-D`;
+  const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const r = await fetch(url, { signal: ctl.signal }); if (!r.ok) throw new Error('VizieR ' + r.status);
+    const rows = (await r.text()).split('\n').filter((l) => l && !l.startsWith('#') && !l.startsWith('-') && /\d/.test(l[0] || ''))
+      .map((l) => l.split('\t').map(Number)).filter((x) => x.length >= 3 && x.every(Number.isFinite)).map(([ra, dec, g]) => ({ ra, dec, g }));
+    oagCache.set(key, rows); return rows;
+  } finally { clearTimeout(tm); }
+}
+async function updateOag() {
+  if (!aladin) return;
+  const [ra0, dec0] = state.center;
+  const rigs = state.rigs.filter((r) => r.on && r.oag?.on).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g);
+  for (const el of document.querySelectorAll('.rig [data-oag]')) {
+    const r = state.rigs.find((x) => x.id === el.closest('.rig').dataset.id);
+    if (!r?.oag?.on) el.innerHTML = '';
+  }
+  if (!oagCat) { oagCat = A.catalog({ name: 'OAG guide stars', sourceSize: 14, color: '#7CFC00', shape: 'circle' }); aladin.addCatalog(oagCat); }
+  oagCat.removeAll?.() ?? oagCat.clear?.();
+  for (const { r, g } of rigs) {
+    const el = document.querySelector(`.rig[data-id="${r.id}"] [data-oag]`);
+    if (r.cols * r.rows > 1) { if (el) el.textContent = 'The guide-star check works on single frames (set the mosaic to 1×1).'; continue; }
+    // one query covers the ring the prism sweeps as the camera rotates, so we can also suggest a better rotation
+    const ringOut = (r.oag.off + Math.hypot(r.oag.w, r.oag.h) / 2) / g.fl * R2D;
+    if (el) el.innerHTML = 'Looking up Gaia stars…';
+    let stars;
+    try { stars = await gaiaCone(ra0, dec0, ringOut, 15); }
+    catch { if (el) el.textContent = 'Could not reach the Gaia catalogue (CDS VizieR). Try again later.'; continue; }
+    const P = stars.map((s) => ({ ...s, p: proj(ra0, dec0, s.ra, s.dec) }));
+    const inside = (rotDeg) => { const q = oagGeom(r, g, rotDeg); return P.filter((s) => { const [x, y] = rot([s.p[0] - q.c[0], s.p[1] - q.c[1]], -q.th); return Math.abs(x) <= q.hx && Math.abs(y) <= q.hy; }).sort((a, b) => a.g - b.g); };
+    const now = inside(r.rot || 0);
+    for (const s of now.slice(0, 40)) oagCat.addSources?.([A.source(s.ra, s.dec, { G: s.g.toFixed(1) })]);
+    const gc = camById(r.oag.cam), gscale = gc ? 206.265 * gc.px / g.fl : null;
+    const good = now.filter((s) => s.g <= 12.5).length, ok = now.filter((s) => s.g <= 14).length;
+    let verdict = now.length ? `${tagH(good ? 'good' : ok ? 'warn' : 'bad', good ? `${good} easy guide star${good > 1 ? 's' : ''}` : ok ? 'faint guide stars only' : 'no usable guide star')} ${now.length} star${now.length !== 1 ? 's' : ''} brighter than G 15 in the prism, brightest G ${now[0].g.toFixed(1)}`
+      : `${tagH('bad', 'no guide star')} no Gaia star brighter than G 15 in the prism`;
+    if (!good) {
+      let best = null;
+      for (let a = 0; a < 180; a += 5) { const st = inside(a)[0]; if (st && (!best || st.g < best.g)) best = { a, g: st.g }; }
+      // the prism side can also be flipped (180°): rotating the camera by a+180 keeps the main framing orientation
+      if (best && best.g < (now[0]?.g ?? 99) - 0.5) verdict += ` · rotate the camera to <b>${best.a}°</b> for a G ${best.g.toFixed(1)} star`;
+    }
+    if (gscale) verdict += ` · guide scale ${gscale.toFixed(2)}″/px`;
+    if (el) el.innerHTML = verdict;
+  }
+}
+const tagH = (c, t) => `<span class="tag ${c}">${t}</span>`;
+
+/* ---------- Satellite trails: expected crossings per sub from constellation geometry ---------- */
+const SAT_SHELLS = [   // [altitude km, number of satellites, inclination°] — approximate 2026 populations
+  [550, 8000, 53], [560, 1200, 43], [570, 700, 97.6], [1200, 650, 87.9], [630, 300, 51.9], [800, 3000, 75],
+];
+function altAzFull(raDeg, decDeg, ms, lat, lon) {
+  const gmst = (280.46061837 + 360.98564736629 * (jd(ms) - 2451545)) % 360;
+  const H = (gmst + lon - raDeg) * D2R, f = lat * D2R, d = decDeg * D2R;
+  const alt = Math.asin(Math.sin(f) * Math.sin(d) + Math.cos(f) * Math.cos(d) * Math.cos(H));
+  const az = Math.atan2(-Math.cos(d) * Math.sin(H), Math.sin(d) * Math.cos(f) - Math.cos(d) * Math.sin(f) * Math.cos(H));
+  return [alt * R2D, ((az * R2D) % 360 + 360) % 360];
+}
+// expected number of trails crossing a w×h° field during t seconds, looking at ra/dec at time ms
+function satTrails(ra, dec, ms, wDeg, hDeg, t) {
+  const { lat, lon } = state.site, Re = 6371;
+  const [alt, az] = altAzFull(ra, dec, ms, lat, lon); if (alt < 5) return null;
+  const [sr, sd] = sunRaDec(ms), [salt, saz] = altAzFull(sr, sd, ms, lat, lon);
+  const dir = (a, z) => [Math.cos(a * D2R) * Math.sin(z * D2R), Math.cos(a * D2R) * Math.cos(z * D2R), Math.sin(a * D2R)];   // east, north, up
+  const u = dir(alt, az), sv = dir(salt, saz), N = [0, Math.cos(lat * D2R), Math.sin(lat * D2R)];
+  const area = (wDeg * D2R) * (hDeg * D2R), perim = 2 * (wDeg + hDeg) * D2R;
+  let lambda = 0;
+  for (const [h, n, inc] of SAT_SHELLS) {
+    const R = Re + h, sa = Math.sin(alt * D2R);
+    const d = -Re * sa + Math.sqrt(Re * Re * sa * sa + 2 * Re * h + h * h);
+    const P = [d * u[0], d * u[1], Re + d * u[2]];
+    const ps = P[0] * sv[0] + P[1] * sv[1] + P[2] * sv[2];
+    const perp = Math.hypot(P[0] - ps * sv[0], P[1] - ps * sv[1], P[2] - ps * sv[2]);
+    if (ps < 0 && perp < Re) continue;                                   // in Earth's shadow
+    const plat = Math.asin((P[0] * N[0] + P[1] * N[1] + P[2] * N[2]) / R);
+    const si = Math.sin(Math.min(inc, 180 - inc) * D2R), sl = Math.sin(plat);
+    if (Math.abs(sl) >= si) continue;                                    // beyond the shell's latitude reach
+    const sigma = n / (2 * Math.PI * Math.PI * R * R * Math.sqrt(Math.max(si * si - sl * sl, si * si * 0.02)));   // per km²
+    const cosz = (P[0] * u[0] + P[1] * u[1] + P[2] * u[2]) / R;
+    const nOmega = sigma * d * d / Math.max(cosz, 0.05);               // per steradian on the sky
+    const omega = 0.8 * Math.sqrt(398600 / R) / d;                       // rad/s
+    lambda += nOmega * (omega * t * perim / Math.PI + area);
+  }
+  return lambda;
+}
+function renderSats() {
+  const out = $('#satOut'); if (!out) return;
+  const t = state.target, sub = state.subLen || 300;
+  const rigs = state.rigs.filter((r) => r.on).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g);
+  const sel = $('#satRig');
+  const keep = sel.value;
+  sel.innerHTML = rigs.map(({ r, g }) => `<option value="${r.id}">${esc(g.s.name)} + ${esc(g.c.name)}</option>`).join('');
+  if (rigs.some((x) => x.r.id === keep)) sel.value = keep;
+  const pick = rigs.find((x) => x.r.id === sel.value) || rigs[0];
+  if (!t || !pick) { out.textContent = t ? 'Turn on a rig to estimate trails.' : 'Load a target to estimate trails.'; return; }
+  const { lat, lon, tz } = state.site, { t0, t1 } = nightWindow();
+  const cells = [];
+  for (let ms = t0; ms < t1; ms += 1800e3) {                              // half-hour steps: the trail-heavy dusk window is short in the tropics
+    const mid = ms + 900e3, [sr, sd] = sunRaDec(mid);
+    if (altAz(sr, sd, mid, lat, lon) > -12) continue;                     // from nautical dusk to nautical dawn
+    const lam = satTrails(t.ra, t.dec, mid, pick.g.mw, pick.g.mh, sub);
+    if (lam == null) continue;
+    const pr = 1 - Math.exp(-lam);
+    const d = new Date(ms + tz * 3600e3);
+    cells.push({ lh: `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`, pr, lam });
+  }
+  if (!cells.length) { out.textContent = 'The target is not up in darkness tonight.'; return; }
+  const cls = (p) => (p < 0.1 ? 'g' : p < 0.35 ? 'w' : 'b');
+  const quiet = cells.find((c, k) => c.pr < 0.1 && cells.slice(k).every((x) => x.pr < 0.15));
+  const total = cells.reduce((a, c) => a + c.lam * 1800 / sub, 0);
+  out.innerHTML = `<div class="satstrip">${cells.map((c) => `<span class="sat ${cls(c.pr)}" title="${c.lh} — about ${Math.round(c.pr * 100)}% of ${sub} s subs get a trail (${c.lam.toFixed(2)} per sub)"><b>${c.lh}</b>${Math.round(c.pr * 100)}%</span>`).join('')}</div>
+    ${quiet ? `Share of subs with a trail drops under 10% from about <b>${quiet.lh}</b>.` : 'Trails stay common all night in this direction (higher orbits remain sunlit).'} Roughly ${Math.round(total)} trails over the whole night with this field.`;
+}
+$('#subLen').value = state.subLen || 300;
+$('#subLen').addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (v > 0) { state.subLen = v; saveStore(); renderSats(); } });
+$('#satRig').addEventListener('change', renderSats);
+
+/* ---------- Rig comparison for the loaded target ---------- */
+function renderCompare() {
+  renderSats();
+  const card = $('#cmpCard'); if (!card) return;
+  const t = state.target, z = state.size;
+  const rigs = state.rigs.filter((r) => r.on).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g);
+  card.hidden = !(t && z?.maj && rigs.length >= 2);
+  if (card.hidden) return;
+  const useFc = state.useFcSeeing && state.fcSeeing, see = useFc ? state.fcSeeing : state.seeing;
+  const rows = rigs.map(({ r, g }) => {
+    const ap = g.s.ap || null;
+    const diff = ap ? 1.03 * 0.55e-3 / ap * 206265 : 0;                    // diffraction FWHM at 550 nm, ″
+    const detail = Math.sqrt(see * see + diff * diff + (1.6 * g.scale) ** 2);   // pixel term ≈ 1.6 px for a well-sampled star
+    const f = fitFor(z, g, { minFill: 0, maxPanels: 1e9 });
+    const fr = g.fr || null;
+    const ratio = see / g.scale;
+    const samp = ratio > 3.5 ? 'over' : ratio < 1.5 ? 'under' : 'good';
+    return { r, g, detail, f, fr, ratio, samp, px: Math.round(z.maj * 60 / g.scale), diff };
+  });
+  const frs = rows.map((x) => x.fr).filter(Boolean), frMin = frs.length ? Math.min(...frs) : null;
+  for (const x of rows) x.time = x.fr && frMin ? (x.fr / frMin) ** 2 : null;
+  const fitCell = (f) => (f.kind === 'fits' ? (f.fill < 0.15 ? `<span class="tag warn">small · ${Math.round(f.fill * 100)}%</span>` : `<span class="tag good">fits · ${Math.round(f.fill * 100)}%</span>`)
+    : `<span class="tag ${f.panels > 4 ? 'bad' : 'warn'}">${f.nc}×${f.nr} mosaic</span>`);
+  const sampCell = (x) => `<span class="tag ${x.samp === 'good' ? 'good' : 'warn'}" title="${(x.ratio).toFixed(1)} px per seeing FWHM">${x.samp === 'over' ? 'oversampled' : x.samp === 'under' ? 'undersampled' : 'well sampled'}</span>`;
+  $('#cmpFor').textContent = `· ${normId(t.mainId || t.name)} · seeing ${see.toFixed(1)}″${useFc ? ' (forecast)' : ''}`;
+  $('#cmpTable').innerHTML = `<div class="cmpwrap"><table class="cmp"><thead><tr><th>Rig</th><th>Scale</th><th>Field</th><th>Framing</th><th title="Expected star size in your image">Detail</th><th title="Time for the same signal-to-noise on faint extended detail, relative to the fastest rig">Time</th><th>Px across</th></tr></thead><tbody>
+    ${rows.map((x) => `<tr><td><span class="rigdot" style="--c:${x.r.color};display:inline-block;margin-right:5px"></span>${esc(x.g.s.name)}<br><span class="note">${esc(x.g.c.name)}${x.fr ? ` · f/${x.fr.toFixed(1)}` : ''}</span></td>
+      <td>${x.g.scale.toFixed(2)}″<br>${sampCell(x)}</td><td>${fmtAngle(Math.max(x.g.w, x.g.h))}</td><td>${fitCell(x.f)}</td>
+      <td><b>${x.detail.toFixed(1)}″</b></td><td>${x.time ? `${x.time.toFixed(1)}×` : '—'}</td><td>${x.px}</td></tr>`).join('')}</tbody></table></div>`;
+  // Trade-offs in words
+  const usable = rows.filter((x) => x.f.kind === 'fits' ? x.f.fill >= 0.15 : x.f.panels <= 4);
+  const pool = rows;
+  const sharp = pool.reduce((a, b) => (b.detail < a.detail ? b : a));
+  const fast = pool.filter((x) => x.time).reduce((a, b) => (b.time < a.time ? b : a), pool.find((x) => x.time) || pool[0]);
+  const nm = (x) => `<b>${esc(x.g.s.name)}</b>`;
+  const out = [];
+  if (sharp === fast) out.push(`${nm(sharp)} is both the sharpest (${sharp.detail.toFixed(1)}″) and the fastest choice for ${esc(normId(t.mainId || t.name))} tonight.`);
+  else {
+    const gain = (fast.detail - sharp.detail) / fast.detail, cost = sharp.time && fast.time ? sharp.time / fast.time : null;
+    if (gain < 0.15) out.push(`With ${see.toFixed(1)}″ seeing, ${nm(sharp)} gives only ${Math.round(gain * 100)}% finer detail than ${nm(fast)} (${sharp.detail.toFixed(1)}″ vs ${fast.detail.toFixed(1)}″)${cost ? ` but needs about ${cost.toFixed(1)}× the time` : ''}: ${see >= 1.6 ? 'seeing is the limit, so ' : 'the gain is small, so '}${nm(fast)} is the efficient pick.`);
+    else out.push(`${nm(sharp)} shows clearly finer detail (${sharp.detail.toFixed(1)}″ vs ${fast.detail.toFixed(1)}″ with ${nm(fast)})${cost ? `, at about ${cost.toFixed(1)}× the integration time` : ''}. Worth it for a small target with structure; ${nm(fast)} is better for faint extended signal.`);
+  }
+  const over = rows.filter((x) => x.samp === 'over');
+  if (over.length) out.push(`${over.map(nm).join(' and ')} ${over.length > 1 ? 'are' : 'is'} oversampled at ${see.toFixed(1)}″: binning 2×2 would cut noise with little loss.${see > 1.6 ? ' Under excellent seeing (around 1.2″) the long focal length pays off much more.' : ''}`);
+  const small = rows.filter((x) => x.f.kind === 'fits' && x.f.fill < 0.15), big = rows.filter((x) => x.f.kind === 'mosaic');
+  if (small.length) out.push(`${small.map(nm).join(', ')}: the target is small in the frame (you can crop, but most of the sensor goes unused)${usable.length && usable.length < rows.length ? `; ${usable.map(nm).join(' and ')} frame${usable.length > 1 ? '' : 's'} it best` : ''}.`);
+  if (big.length) out.push(`${big.map((x) => `${nm(x)} needs a ${x.f.nc}×${x.f.nr} mosaic`).join('; ')}.`);
+  $('#cmpVerdict').innerHTML = out.map((x) => `<p>${x}</p>`).join('');
 }
 function onRigInput(e) {
   const el = e.target.closest('.rig'); if (!el) return;
   const r = state.rigs.find((x) => x.id === el.dataset.id); const k = e.target.dataset.k; if (!r || !k) return;
+  if (k.startsWith('oag.')) {
+    r.oag = { on: false, w: 8, h: 8, off: oagDefaultOff(r), pa: 0, cam: '', ...(r.oag || {}) };
+    const sub = k.slice(4);
+    if (sub === 'on') r.oag.on = e.target.checked;
+    else if (sub === 'cam') r.oag.cam = e.target.value;
+    else { const v = parseFloat(e.target.value); if (!isFinite(v)) return; r.oag[sub] = v; }
+    saveStore(); drawFrames(); scheduleOag(true); return;
+  }
   if (k === 'on') { r.on = e.target.checked; el.classList.toggle('off', !r.on); }
   else if (k === 'color') { r.color = e.target.value; el.style.setProperty('--c', r.color); }
   else if (k === 'scope' || k === 'cam' || k === 'filter') r[k] = e.target.value;
@@ -1893,6 +2159,7 @@ function drawAltChart() {
   }
   ctx.stroke();
   const lt = new Date(peakT + tz * 3600e3);
+  setTimeout(renderSats, 0);
   $('#altSum').innerHTML = `Highest ${peak.toFixed(0)}° at ${String(lt.getUTCHours()).padStart(2, '0')}:${String(lt.getUTCMinutes()).padStart(2, '0')} · <b style="color:var(--text)">${(good / 3600e3).toFixed(1)} h</b> above 30° in astronomical darkness`;
 }
 
@@ -2683,7 +2950,7 @@ function saveEq() {
   state.filters = readTbl('#filtTbl', ['bw']).filter((f) => f.name).map((f) => ({ ...f, bw: Number.isFinite(f.bw) ? f.bw : null }));
   for (const r of state.rigs) if (r.filter && !filterById(r.filter)) r.filter = '';
   for (const r of state.rigs) { if (!scopeById(r.scope)) r.scope = scopes[0].id; if (!camById(r.cam)) r.cam = cams[0].id; }
-  saveStore(); $('#eqDlg').close(); renderRigs(); drawFrames(); rerenderWeather(); renderGearEq();
+  saveStore(); $('#eqDlg').close(); renderRigs(); drawFrames(); rerenderWeather(); renderGearEq(); opticsSetup();
 }
 
 
@@ -3203,6 +3470,191 @@ $('#coordCsv').addEventListener('click', () => {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([$('#coordDlg').dataset.csv], { type: 'text/csv' }));
   a.download = `${coordRows().name.replace(/[^\w.-]+/g, '_')}_framing.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 });
+
+/* ---------- Optics check: tilt, back-focus spacing and tracking from star shapes in one raw FITS sub ---------- */
+async function readFitsPlane(file) {
+  const buf = await file.arrayBuffer();
+  const h = parseFitsHeader(buf.slice(0, 2880 * 40)), off = fitsDataOffset(buf);
+  const W = h.NAXIS1, H = h.NAXIS2, bp = h.BITPIX, bz = h.BZERO || 0, bs = h.BSCALE ?? 1;
+  if (!(W > 64 && H > 64)) throw new Error('That FITS file holds no image.');
+  const n = W * H, dv = new DataView(buf, off);
+  const rd = bp === 8 ? (i) => dv.getUint8(i) : bp === 16 ? (i) => dv.getInt16(i * 2) : bp === 32 ? (i) => dv.getInt32(i * 4)
+    : bp === -32 ? (i) => dv.getFloat32(i * 4) : bp === -64 ? (i) => dv.getFloat64(i * 8) : null;
+  if (!rd) throw new Error(`Unsupported BITPIX ${bp}.`);
+  if (off + n * Math.abs(bp) / 8 > buf.byteLength) throw new Error('The file is truncated.');
+  const a = new Float32Array(n);
+  for (let i = 0; i < n; i++) a[i] = bz + bs * rd(i);
+  return { a, W, H, h };
+}
+function binImage(img, f) {
+  if (f === 1) return img;
+  const W = Math.floor(img.W / f), H = Math.floor(img.H / f), a = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { let s = 0; for (let j = 0; j < f; j++) for (let i = 0; i < f; i++) s += img.a[(y * f + j) * img.W + x * f + i]; a[y * W + x] = s; }
+  return { ...img, a, W, H };
+}
+const medianOf = (arr) => { const s = Float64Array.from(arr).sort(); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
+function measureStars(img) {
+  const { a, W, H } = img, G = 64, gx = Math.ceil(W / G), gy = Math.ceil(H / G);
+  // background and noise per 64-px cell (sampled)
+  const bg = new Float32Array(gx * gy), nz = [];
+  for (let cy = 0; cy < gy; cy++) for (let cx = 0; cx < gx; cx++) {
+    const v = [];
+    for (let y = cy * G; y < Math.min(H, cy * G + G); y += 3) for (let x = cx * G; x < Math.min(W, cx * G + G); x += 3) v.push(a[y * W + x]);
+    const m = medianOf(v); bg[cy * gx + cx] = m;
+    nz.push(1.4826 * medianOf(v.map((x) => Math.abs(x - m))));
+  }
+  const sigma = medianOf(nz) || 1, B = (x, y) => bg[Math.min(gy - 1, (y / G) | 0) * gx + Math.min(gx - 1, (x / G) | 0)];
+  let vmax = -Infinity; for (let i = 0; i < a.length; i += 7) if (a[i] > vmax) vmax = a[i];
+  const sat = vmax * 0.85, thr = 7 * sigma, cand = [];
+  for (let y = 10; y < H - 10; y++) for (let x = 10; x < W - 10; x++) {
+    const v = a[y * W + x], b = B(x, y);
+    if (v - b < thr || v >= sat) continue;
+    let peak = true;
+    for (let j = -3; j <= 3 && peak; j++) for (let i = -3; i <= 3; i++) { if ((i || j) && a[(y + j) * W + x + i] > v) { peak = false; break; } }
+    if (peak) cand.push([x, y, v - b]);
+  }
+  cand.sort((p, q) => q[2] - p[2]);
+  const stars = [], taken = [];
+  for (const [x, y, pk] of cand) {
+    if (stars.length >= 1500) break;
+    if (taken.some(([tx, ty]) => Math.abs(tx - x) < 12 && Math.abs(ty - y) < 12)) continue;          // isolated stars only
+    taken.push([x, y]);
+    // adaptive Gaussian-weighted moments (3 iterations); covariance of the star = 2 × weighted covariance
+    let cx = x, cy = y, sw = 2, mxx = 0, myy = 0, mxy = 0, ok = true;
+    for (let it = 0; it < 6; it++) {
+      const R = Math.min(14, Math.ceil(3.5 * sw)); let s = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+      for (let j = -R; j <= R; j++) for (let i = -R; i <= R; i++) {
+        const X = Math.round(cx) + i, Y = Math.round(cy) + j; if (X < 0 || Y < 0 || X >= W || Y >= H) { ok = false; continue; }
+        const dx = X - cx, dy = Y - cy, w = Math.exp(-(dx * dx + dy * dy) / (2 * sw * sw)), v = (a[Y * W + X] - B(X, Y)) * w;
+        s += v; sx += v * dx; sy += v * dy; sxx += v * dx * dx; syy += v * dy * dy; sxy += v * dx * dy;
+      }
+      if (!(s > 0)) { ok = false; break; }
+      cx += sx / s; cy += sy / s;
+      mxx = 2 * (sxx / s - (sx / s) ** 2); myy = 2 * (syy / s - (sy / s) ** 2); mxy = 2 * (sxy / s - (sx / s) * (sy / s));
+      const nsw = Math.sqrt(Math.max(0.3, (mxx + myy) / 2)); if (Math.abs(nsw - sw) < 0.01) { sw = nsw; break; } sw = nsw;
+    }
+    if (!ok || !(mxx > 0 && myy > 0)) continue;
+    const tr = mxx + myy, det = mxx * myy - mxy * mxy, disc = Math.sqrt(Math.max(0, tr * tr / 4 - det));
+    const l1 = tr / 2 + disc, l2 = tr / 2 - disc; if (!(l2 > 0)) continue;
+    const fwhm = 2.3548 * Math.sqrt((l1 + l2) / 2), e = 1 - Math.sqrt(l2 / l1), th = 0.5 * Math.atan2(2 * mxy, mxx - myy);
+    if (fwhm < 1.2 || e > 0.6) continue;
+    stars.push({ x: cx, y: cy, fwhm, e, th, pk });
+  }
+  const mf = medianOf(stars.map((s) => s.fwhm));
+  return { stars: stars.filter((s) => s.fwhm < 3 * mf), W, H, sigma };
+}
+function analyseOptics(res, scale) {
+  const { stars, W, H } = res;
+  if (stars.length < 30) return { error: `Only ${stars.length} usable stars found: use a sharper, longer raw sub with plenty of stars (not a stack, not starless).` };
+  const nx = (s) => (2 * s.x) / (W - 1) - 1, ny = (s) => (2 * s.y) / (H - 1) - 1;
+  // 3×3 zones
+  const zones = [];
+  for (let zy = 0; zy < 3; zy++) for (let zx = 0; zx < 3; zx++) {
+    const z = stars.filter((s) => Math.min(2, (s.x / W * 3) | 0) === zx && Math.min(2, (s.y / H * 3) | 0) === zy);
+    zones.push({ zx, zy, n: z.length, fwhm: z.length ? medianOf(z.map((s) => s.fwhm)) : null, e: z.length ? medianOf(z.map((s) => s.e)) : null });
+  }
+  // plane fit FWHM = c0 + c1·x + c2·y (least squares, normalised coordinates)
+  let S = [0, 0, 0, 0, 0, 0, 0, 0, 0], T = [0, 0, 0];
+  for (const s of stars) { const v = [1, nx(s), ny(s)]; for (let i = 0; i < 3; i++) { T[i] += v[i] * s.fwhm; for (let j = 0; j < 3; j++) S[i * 3 + j] += v[i] * v[j]; } }
+  const inv3 = (m) => { const [a, b, c, d, e, f, g, h, i] = m, A = e * i - f * h, Bq = -(d * i - f * g), C = d * h - e * g, D = a * A + b * Bq + c * C;
+    return [A, -(b * i - c * h), b * f - c * e, Bq, a * i - c * g, -(a * f - c * d), C, -(a * h - b * g), a * e - b * d].map((x) => x / D); };
+  const M = inv3(S), c = [0, 1, 2].map((i) => M[i * 3] * T[0] + M[i * 3 + 1] * T[1] + M[i * 3 + 2] * T[2]);
+  const tiltPct = Math.hypot(c[1], c[2]) * 2 / c[0] * 100;        // edge-to-edge change across the frame, % of the centre FWHM
+  const gradAng = Math.atan2(c[2], c[1]) * R2D;                     // direction in which stars get bigger
+  // elongation: uniform part (tracking/wind) and field-dependent part (radial vs tangential)
+  const mean = stars.reduce((m, s) => [m[0] + s.e * Math.cos(2 * s.th), m[1] + s.e * Math.sin(2 * s.th)], [0, 0]).map((v) => v / stars.length);
+  const uniform = Math.hypot(...mean), uniAng = 0.5 * Math.atan2(mean[1], mean[0]) * R2D;
+  const outer = stars.filter((s) => Math.hypot(nx(s), ny(s) * H / W) > 0.6), inner = stars.filter((s) => Math.hypot(nx(s), ny(s) * H / W) < 0.3);
+  const radial = outer.length ? outer.reduce((acc, s) => { const psi = Math.atan2(s.y - H / 2, s.x - W / 2);
+    const e1 = s.e * Math.cos(2 * s.th) - mean[0], e2 = s.e * Math.sin(2 * s.th) - mean[1];
+    return acc + (e1 * Math.cos(2 * psi) + e2 * Math.sin(2 * psi)); }, 0) / outer.length : 0;
+  const eIn = inner.length ? medianOf(inner.map((s) => s.e)) : null, eOut = outer.length ? medianOf(outer.map((s) => s.e)) : null;
+  const fIn = inner.length ? medianOf(inner.map((s) => s.fwhm)) : null, fOut = outer.length ? medianOf(outer.map((s) => s.fwhm)) : null;
+  return { n: stars.length, zones, c, tiltPct, gradAng, uniform, uniAng, radial, eIn, eOut, fIn, fOut, scale, medF: medianOf(stars.map((s) => s.fwhm)) };
+}
+function sideName(angDeg) {   // direction on the plot (x right, y up)
+  const a = ((angDeg % 360) + 360) % 360;
+  return ['right', 'top-right', 'top', 'top-left', 'left', 'bottom-left', 'bottom', 'bottom-right'][Math.round(a / 45) % 8];
+}
+function drawOptics(cv, res, A) {
+  const { stars, W, H } = res, w = cv.width = 520, h = cv.height = Math.round(520 * H / W), ctx = cv.getContext('2d');
+  ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, w, h);
+  const med = A.medF;
+  // zone shading: green = as sharp as the median, red = 30%+ larger (fixed scale, so small differences stay neutral)
+  for (const z of A.zones) {
+    if (!z.fwhm) continue;
+    const t = Math.max(0, Math.min(1, (z.fwhm / med - 1) / 0.3 + 0.5));
+    ctx.fillStyle = `rgba(${Math.round(50 + 180 * t)},${Math.round(170 - 110 * t)},80,0.25)`;
+    ctx.fillRect(z.zx * w / 3 + 1, h - (z.zy + 1) * h / 3 + 1, w / 3 - 2, h / 3 - 2);
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 1.1;
+  for (const s of stars.slice(0, 500)) {
+    const px = s.x / W * w, py = h - s.y / H * h, L = 3 + s.e * 50;
+    ctx.beginPath(); ctx.moveTo(px - Math.cos(s.th) * L / 2, py + Math.sin(s.th) * L / 2); ctx.lineTo(px + Math.cos(s.th) * L / 2, py - Math.sin(s.th) * L / 2); ctx.stroke();
+  }
+  ctx.textAlign = 'center';
+  for (const z of A.zones) {
+    if (!z.fwhm) continue;
+    const cx = z.zx * w / 3 + w / 6, cy = h - (z.zy + 1) * h / 3 + h / 6;
+    ctx.fillStyle = 'rgba(11,14,20,0.8)'; ctx.fillRect(cx - 44, cy - 15, 88, 34);
+    ctx.fillStyle = '#e6eaf2'; ctx.font = '600 13px system-ui'; ctx.fillText(`${(z.fwhm * A.scale).toFixed(2)}″`, cx, cy);
+    ctx.fillStyle = '#9aa6bb'; ctx.font = '10.5px system-ui'; ctx.fillText(`e ${z.e.toFixed(2)} · ${z.n}★`, cx, cy + 14);
+  }
+}
+function opticsVerdict(A, rig) {
+  const out = [], tag = tagH;
+  const tp = A.tiltPct, side = sideName(A.gradAng), opp = sideName(A.gradAng + 180);
+  out.push(tp < 10 ? `${tag('good', 'tilt OK')} star size changes only ${tp.toFixed(0)}% across the frame.`
+    : `${tag(tp < 20 ? 'warn' : 'bad', tp < 20 ? 'mild tilt' : 'tilt')} stars are about ${tp.toFixed(0)}% larger toward the <b>${side}</b> than the <b>${opp}</b> of the plot. If focus was set in the centre, this is the classic sign of a tilted sensor${tp >= 20 ? ': a tilt plate or shim on that side is worth it' : ''}.`);
+  const uniTxt = A.uniform >= 0.08;
+  if (uniTxt) out.push(`${tag('warn', 'elongated everywhere')} stars are stretched in the same direction across the whole frame (${A.uniform.toFixed(2)} at ${Math.round(((A.uniAng % 180) + 180) % 180)}° on the plot, centre included): that points to <b>guiding, wind or flexure</b>, not the optics.`);
+  const r = A.radial, edgeWorse = A.eOut != null && A.eIn != null && A.eOut - A.eIn > 0.04;
+  if (Math.abs(r) >= 0.05 && edgeWorse) out.push(`${tag('warn', r > 0 ? 'radial stretching in the corners' : 'tangential stretching in the corners')} corner stars are elongated ${r > 0 ? 'pointing toward/away from the centre' : 'around the centre'} (corners e ${A.eOut.toFixed(2)} vs centre ${A.eIn.toFixed(2)}). `
+    + `This usually means the <b>back-focus spacing</b> to the ${rig?.s?.name?.match(/newton/i) ? 'coma corrector' : 'reducer/flattener'} is off${r > 0 ? '' : ' (in the other direction)'}. Change the spacing by about 0.5–1 mm and check again: if the corners get worse, go the other way.`);
+  else if (A.eOut != null) out.push(`${tag('good', 'spacing looks fine')} corner stars are about as round as the centre (e ${A.eOut.toFixed(2)} vs ${A.eIn?.toFixed(2) ?? '—'}).`);
+  if (A.fOut && A.fIn && A.fOut / A.fIn > 1.25 && Math.abs(r) < 0.05) out.push(`${tag('warn', 'soft corners')} corner stars are ${Math.round((A.fOut / A.fIn - 1) * 100)}% larger but still round: field curvature or spacing (flattener distance).`);
+  return out;
+}
+let opticsLast = null;
+async function runOptics(file) {
+  const msg = (t) => { $('#optMsg').innerHTML = t; };
+  const r = state.rigs.find((x) => x.id === $('#optRig').value), g = r && rigGeom(r);
+  try {
+    msg('Reading the FITS file…');
+    let img = await readFitsPlane(file);
+    const bayer = !!img.h.BAYERPAT || (g && camKind(g.c) === 'osc');
+    const f = bayer ? 2 : img.W > 7000 ? 2 : 1;
+    img = binImage(img, f);
+    msg(`Finding stars (${img.W}×${img.H}${f > 1 ? `, binned ${f}×${f}${bayer ? ' to remove the colour pattern' : ''}` : ''})…`);
+    await new Promise((res) => setTimeout(res, 30));
+    const res = measureStars(img);
+    const scale = g ? g.scale * f : (img.h.XPIXSZ && img.h.FOCALLEN ? 206.265 * img.h.XPIXSZ * f / img.h.FOCALLEN : 1);
+    const A = analyseOptics(res, scale);
+    if (A.error) { msg(A.error); $('#optOut').hidden = true; return; }
+    drawOptics($('#optPlot'), res, A);
+    $('#optVerdict').innerHTML = `<p class="note">${A.n} stars · median FWHM ${(A.medF * scale).toFixed(2)}″ (${A.medF.toFixed(1)} px${f > 1 ? ' binned' : ''})${g ? '' : ' · pick the rig for arc-seconds'}</p>` + opticsVerdict(A, g).map((x) => `<p>${x}</p>`).join('');
+    $('#optOut').hidden = false; msg('');
+    opticsLast = { rig: r?.id, at: Date.now(), name: file.name, tilt: Math.round(A.tiltPct), radial: +A.radial.toFixed(3), uniform: +A.uniform.toFixed(3), fwhm: +(A.medF * scale).toFixed(2) };
+    const hist = (() => { try { return JSON.parse(localStorage.getItem('mrp.optics') || '[]'); } catch { return []; } })();
+    hist.unshift(opticsLast); try { localStorage.setItem('mrp.optics', JSON.stringify(hist.slice(0, 40))); } catch {}
+    renderOpticsHistory(); track('optics');
+  } catch (e) { msg(esc(e.message || 'Could not analyse that file.')); }
+}
+function renderOpticsHistory() {
+  const hist = (() => { try { return JSON.parse(localStorage.getItem('mrp.optics') || '[]'); } catch { return []; } })();
+  const rid = $('#optRig').value, rows = hist.filter((h) => h.rig === rid).slice(0, 6);
+  $('#optHist').innerHTML = rows.length ? `<div class="note" style="margin-top:8px">Earlier checks on this rig:</div>` + rows.map((h) => `<div class="note">${new Date(h.at).toLocaleDateString()} · tilt ${h.tilt}% · corners ${Math.abs(h.radial) < 0.05 ? 'round' : h.radial > 0 ? 'radial' : 'tangential'} · FWHM ${h.fwhm}″ <span style="opacity:.7">(${esc(h.name)})</span></div>`).join('') : '';
+}
+function opticsSetup() {
+  const sel = $('#optRig'); if (!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = state.rigs.map((r) => { const g = rigGeom(r); return g ? `<option value="${r.id}">${esc(g.s.name)} + ${esc(g.c.name)}</option>` : ''; }).join('');
+  if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  renderOpticsHistory();
+}
+$('#optFile').addEventListener('change', (e) => { const f = e.target.files?.[0]; if (f) runOptics(f); e.target.value = ''; });
+$('#optRig').addEventListener('change', renderOpticsHistory);
+opticsSetup();
 
 /* ---------- Tabs ---------- */
 const TABS = ['frame', 'tonight', 'sky', 'gallery', 'gear'];

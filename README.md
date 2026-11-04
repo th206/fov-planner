@@ -32,6 +32,9 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - **Share framing**: one link opens the same target with your frames (rotation, mosaics) drawn dashed for a friend, who can add them to their own rigs
 - **Coordinates** for capture software (ASIAIR, N.I.N.A., Ekos, SharpCap): J2000 centre, rotation and every mosaic panel, as text to copy or a CSV file
 
+- **Rig comparison** for the loaded target: image scale and sampling for the forecast seeing, field, framing or mosaic panels, expected detail (seeing + diffraction + pixels), relative exposure time and pixels across the target, with the trade-offs explained in words
+- **Off-axis guider**: set prism size, offset, side and guide camera per rig; the prism footprint is drawn on the map and Gaia DR3 stars inside it are counted, with a suggested camera rotation when no good guide star is in reach
+
 ## Tonight's targets, filtered for your rigs
 
 - ~2,200 objects ranked for the chosen night and place: galaxies, nebulae, Lynds bright (LBN) and dark (LDN) nebulae, optically visible supernova remnants, planetary nebulae and clusters
@@ -64,6 +67,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - The hourly table shows the essentials (cloud, rain, storms, seeing, transparency, gusts per telescope, dew); cloud layers, the three models, jet stream, cooling, humidity and dust sit under **More detail**
 - 7Timer ASTRO chart, plus links to meteoblue and Clear Outside (and Qatar Met / QMD for locations in Qatar)
 - Altitude chart for any night, with twilight shading
+- **Satellite trails** estimate: the chance that a sub of your chosen length gets a trail, every half hour through the night, from today's constellation sizes and whether satellites in your target's direction are still sunlit
 
 ## Sky imagery
 
@@ -85,6 +89,10 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Overlay your own plate-solved images: JPG/PNG + astrometry.net `wcs.fits` or ASTAP `.wcs`, or a FITS (mono or RGB, optionally with a separate `wcs.fits`)
 - Linear FITS data is auto-stretched; stretched data is shown as-is; unsolved FITS are placed approximately from RA/DEC + focal length + pixel size, with a rotation slider
 - Stored in your browser and shown automatically whenever that part of the sky is in view, with opacity and flip controls
+
+## Optics check (Gear)
+
+- Drop in one raw FITS sub: the planner measures hundreds of stars on your device and reports **sensor tilt** (star size across the frame), **back-focus spacing** (radial or tangential stretching in the corners) and **guiding/wind/flexure** (the same stretch everywhere), with a 3×3 star-size map, a whisker plot and a history per rig
 
 ## Your data
 
