@@ -39,6 +39,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Usable dark hours above your minimum altitude, peak altitude, and Moon distance; galaxies, dark nebulae and clusters can count only moon-free hours
 - Aware of each rig's filter: galaxies and clusters still show for narrowband/dual-band rigs, marked **swap filter** with the broadband filter to use from your own list; broadband rigs count moonlight on everything
 - When nothing matches, it says why (too small, too low, or too little moon-free time)
+- Targets you have already imaged (in your own gallery photos, by name or by what the photo covers) are marked ✓ imaged and ranked lower
 - Pick a target from the dropdown to load it; for mosaics the rig's grid and rotation are set for you
 
 ## Filters
