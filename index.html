@@ -136,6 +136,7 @@
   .righead { display: flex; gap: 8px; align-items: center; }
   .rigname { flex: 1; display: flex; justify-content: space-between; align-items: center; gap: 6px; background: none; border: none; padding: 2px 0; color: var(--text); font: inherit; font-weight: 600; font-size: 13.5px; text-align: left; cursor: pointer; }
   .rigname .chev { color: var(--muted); transition: transform .15s; font-size: 12px; }
+  .rigdel { padding: 2px 7px; font-size: 12px; opacity: .55; } .rigdel:hover { opacity: 1; color: var(--bad); }
   .rig.open .rigname .chev { transform: rotate(180deg); }
   .rigsum { font-size: 12px; color: var(--muted); line-height: 1.7; font-variant-numeric: tabular-nums; }
   .rigsum b { color: var(--text); font-weight: 600; }
@@ -1802,13 +1803,13 @@ function renderRigs() {
       <div class="righead">
         <input type="checkbox" data-k="on" ${r.on ? 'checked' : ''} title="Show / hide">
         <button type="button" class="rigname" data-act="toggle" aria-expanded="${r.open ? 'true' : 'false'}" title="Show / hide settings"><span data-name></span><span class="chev">▾</span></button>
+        <button type="button" class="icon ghost rigdel" data-act="del" title="Remove this rig" aria-label="Remove this rig">✕</button>
       </div>
       <div class="rigsum" data-sum></div>
       <div class="rigbody">
       <div class="top">
         <input type="color" data-k="color" value="${r.color}" title="Frame color">
         <select data-k="scope" aria-label="Telescope">${opts(state.scopes, r.scope)}</select>
-        <button class="icon ghost" data-act="del" title="Remove rig">✕</button>
       </div>
       <div class="top">
         <select data-k="cam" aria-label="Camera">${opts(state.cams, r.cam)}</select>
@@ -1850,7 +1851,7 @@ function renderRigs() {
       <div class="stats" data-stats></div>
       </div>
     </div>`).join('');
-  renderRigStats(); opticsSetup();
+  renderRigStats(); opticsSetup(); if (state.tn) tonightSetup();
 }
 function renderRigStats() {
   for (const el of document.querySelectorAll('.rig')) {
@@ -2155,7 +2156,7 @@ function onRigInput(e) {
     r[k] = v;
     if (k === 'rot') el.querySelector('[data-rotv]').textContent = `${v}°`;
   }
-  if (k === 'on' || k === 'scope' || k === 'cam') tonightSetup();   // keep rig names in Tonight's dropdown current
+  if (k === 'on' || k === 'scope' || k === 'cam') { tonightSetup(); opticsSetup(); }   // keep rig names in the Tonight and Optics dropdowns current
   if (k === 'on' || k === 'scope' || k === 'cam' || k === 'factor') { clearTimeout(onRigInput.wt); onRigInput.wt = setTimeout(rerenderWeather, 300); }
   saveStore(); renderRigStats(); drawFrames(); scheduleTonight();
 }
@@ -3812,6 +3813,9 @@ $('#rigs').addEventListener('click', (e) => {
 $('#rigs').addEventListener('click', (e) => {
   if (e.target.dataset.act !== 'del') return;
   const id = e.target.closest('.rig').dataset.id;
+  const rr = state.rigs.find((x) => x.id === id);
+  if (state.rigs.length <= 1) { alert('Keep at least one rig. Change its telescope or camera instead.'); return; }
+  if (rr?.oag?.on && !confirm('This rig has an off-axis guider calibration. Remove the rig and its calibration?')) return;
   state.rigs = state.rigs.filter((r) => r.id !== id); saveStore(); renderRigs(); drawFrames();
 });
 $('#addRig').addEventListener('click', () => {
