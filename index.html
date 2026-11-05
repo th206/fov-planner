@@ -4212,7 +4212,7 @@ if ((/github\.io$/i.test(location.hostname) || location.hostname === 'www.fovpla
 if (window.__mrpMoved) {
   const mv = window.__mrpMoved, b = $('#movedBanner');
   b.querySelector('div').innerHTML = `Your setup from <b>${esc(mv.from.replace(/^https?:\/\//, ''))}</b> ${mv.fresh ? 'has been moved here' : mv.merged ? 'has been added to the one already here' : 'matches the one already here'}. Please use <b>fovplanner.com</b> from now on.`
-    + (mv.n ? ` ${mv.n} private image${mv.n > 1 ? 's are' : ' is'} still stored at the old address: <a href="${esc(mv.from)}?stay">open it</a> and use <i>Export my setup</i> (with images), then <i>Import backup</i> here.` : '');
+    + (mv.n ? ` ${mv.n} private image${mv.n > 1 ? 's are' : ' is'} still stored at the old address: <a href="${esc(mv.from)}?stay">open it</a> to download a backup with images, then use <i>Import backup</i> here (Gear tab).` : '');
   b.hidden = false; $('#movedClose').addEventListener('click', () => { b.hidden = true; });
   track('moved-auto');
 }
