@@ -93,6 +93,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 ## Optics check (Gear)
 
 - Drop in one raw FITS sub: the planner measures hundreds of stars on your device and reports **sensor tilt** (star size across the frame), **back-focus spacing** (radial or tangential stretching in the corners) and **guiding/wind/flexure** (the same stretch everywhere), with a 3×3 star-size map, a whisker plot and a history per rig
+- **Which tilt screw:** a one-time daylight card test per camera maps the plot to the camera body (clock positions seen from the back, USB port at 12), optionally naming your tilt plate's adjusters. A second sub taken after nudging focus inward shows which side sits too far from the telescope and which way to turn. This test works wherever focus was set.
 
 ## Your data
 

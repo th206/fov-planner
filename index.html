@@ -506,7 +506,22 @@
         <canvas id="optPlot" class="optplot"></canvas>
         <div class="note">Each line is a star: its length shows how stretched it is, its angle which way. Squares show the median star size in each part of the frame.</div>
         <div id="optVerdict" class="cmpverdict"></div>
+        <div class="row" style="margin-top:6px"><button type="button" class="icon" id="optNudgeBtn">Tilt direction: compare a nudged sub…</button></div>
+        <input type="file" id="optNudge" hidden accept=".fit,.fits,.fts">
+        <div class="note" id="optNudgeMsg">Right after this sub, move the focuser a little <b>inward</b> (toward the telescope) — just enough that centre stars grow by about a quarter — take one more sub with the same filter and exposure, and pick it here. It shows which side of the sensor is too far from the telescope and which way to turn. This also catches tilt that a single sub hides when focus sits right on the tilted plane's centre.</div>
       </div>
+      <details class="oagbox" id="camSidesBox" style="margin-top:10px">
+        <summary>Camera sides: which tilt screw? <span class="note" id="camSidesState"></span></summary>
+        <div class="note">A one-time daylight test per camera, so the planner can name the side of the camera body instead of a side of the plot.
+          Take the camera <b>off the telescope</b>, remove the cap and point it at a bright, even surface (a lit wall or white screen). Use the <b>same capture software</b> you image with (ASIAIR, N.I.N.A.…), a short exposure like a flat, and save FITS.
+          <ol style="margin:6px 0 6px 18px;padding:0">
+            <li>Hold a card in front of the window so it shades the half on the <b>USB-port side</b>. Take a frame.</li>
+            <li>Now look at the <b>back</b> of the camera with the USB port at the top (12 o'clock). Shade the half on <b>your right</b> (3 o'clock). Take a frame.</li>
+          </ol>Take them in this order: the planner tells them apart by file name, which most capture programs number or time-stamp. Redo the test if you switch capture software.</div><div class="note" hidden></div>
+        <div class="row"><button type="button" class="icon" id="camSidesPick">Choose the two frames…</button><input type="file" id="camSidesFile" hidden multiple accept=".fit,.fits,.fts"><span class="note" id="camSidesMsg"></span></div>
+        <div class="row"><label style="flex:1">Tilt adjusters at <input id="camScrews" placeholder="e.g. 2, 6, 10 o'clock" style="flex:1;min-width:0"></label></div>
+        <div class="note">Optional: where your tilt plate's adjusters are, as clock positions seen from the back of the camera with the USB port at 12. Then the result names the screws.</div>
+      </details>
       <div id="optHist"></div>
     </section>
 
@@ -681,7 +696,7 @@ function saveStore() {
   try {
     localStorage.setItem(KEY, JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay,
+      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay, camSides: state.camSides,
     }));
   } catch { /* storage unavailable */ }
 }
@@ -700,6 +715,7 @@ const state = {
   dust: saved.dust || 'auto',
   subLen: saved.subLen || 300,
   galOverlay: saved.galOverlay ?? true,
+  camSides: saved.camSides || {},   // per camera id: {port, mirror, rowOrder, screws} — which way the camera body sits on the optics-check plot
   windBias: null,
   filters: saved.filters || [],
   boost: saved.boost ?? 30,
@@ -3623,6 +3639,45 @@ function sideName(angDeg) {   // direction on the plot (x right, y up)
   const a = ((angDeg % 360) + 360) % 360;
   return ['right', 'top-right', 'top', 'top-left', 'left', 'bottom-left', 'bottom', 'bottom-right'][Math.round(a / 45) % 8];
 }
+// ---- camera sides: map plot directions to the camera body (USB port = 12 o'clock, seen from the back) ----
+const rowOrd = (h) => String(h?.ROWORDER || '').trim().toUpperCase() || null;
+function darkSide(img) {   // direction (plot degrees: 0 right, 90 top) of the shaded half, or null
+  const { a, W, H } = img; let L = 0, R = 0, B = 0, T = 0, nL = 0, nR = 0, nB = 0, nT = 0;
+  for (let y = 0; y < H; y += 4) for (let x = 0; x < W; x += 4) {
+    const v = a[y * W + x];
+    if (x < W / 2) { L += v; nL++; } else { R += v; nR++; }
+    if (y < H / 2) { B += v; nB++; } else { T += v; nT++; }
+  }
+  L /= nL; R /= nR; B /= nB; T /= nT;
+  const mean = (L + R) / 2, dx = R - L, dy = T - B;
+  if (!(mean > 0) || Math.max(Math.abs(dx), Math.abs(dy)) < 0.15 * mean) return null;
+  return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 180 : 0) : (dy > 0 ? 270 : 90);
+}
+function camMapFor(rig, hdr) {   // effective map for a light frame, allowing for a different FITS row order
+  const m = rig && state.camSides[rig.cam]; if (!m) return null;
+  const ro = rowOrd(hdr);
+  if (m.rowOrder && ro && m.rowOrder !== ro) return { ...m, port: (360 - m.port) % 360, mirror: !m.mirror };
+  return m;
+}
+function clockOf(ang, m) {   // plot angle → clock hour (1–12) seen from the back of the camera, USB port at 12
+  const d = ((ang - m.port) % 360 + 360) % 360, h = (m.mirror ? d : 360 - d) / 30;
+  const r = Math.round(h) % 12; return r === 0 ? 12 : r;
+}
+function parseScrews(t) { return String(t || '').split(/[^0-9.]+/).map(Number).filter((x) => x >= 1 && x <= 12); }
+function screwAdvice(hour, screws) {   // which adjuster(s) sit on the bad side
+  if (!screws.length) return '';
+  const dist = (h) => { const d = Math.abs(((h - hour) % 12 + 12) % 12); return Math.min(d, 12 - d); };
+  const s = [...screws].sort((p, q) => dist(p) - dist(q));
+  if (s.length > 1 && dist(s[1]) - dist(s[0]) < 0.75) return `the adjusters at <b>${s[0]} and ${s[1]} o'clock</b> (equally)`;
+  return `the adjuster at <b>${s[0]} o'clock</b>`;
+}
+function camSidesRender() {
+  const r = state.rigs.find((x) => x.id === $('#optRig')?.value), g = r && rigGeom(r), m = r && state.camSides[r.cam];
+  if (!$('#camSidesState')) return;
+  $('#camSidesState').textContent = g ? (m ? `· set for ${g.c.name}` : `· not set for ${g.c.name}`) : '';
+  $('#camScrews').value = m?.screws || '';
+  $('#camScrews').disabled = !m;
+}
 function drawOptics(cv, res, A) {
   const { stars, W, H } = res, w = cv.width = 520, h = cv.height = Math.round(520 * H / W), ctx = cv.getContext('2d');
   ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, w, h);
@@ -3647,12 +3702,20 @@ function drawOptics(cv, res, A) {
     ctx.fillStyle = '#e6eaf2'; ctx.font = '600 13px system-ui'; ctx.fillText(`${(z.fwhm * A.scale).toFixed(2)}″`, cx, cy);
     ctx.fillStyle = '#9aa6bb'; ctx.font = '10.5px system-ui'; ctx.fillText(`e ${z.e.toFixed(2)} · ${z.n}★`, cx, cy + 14);
   }
+  if (A.map) {   // mark the USB-port side of the camera
+    const t = A.map.port * D2R, px = w / 2 + Math.cos(t) * (w / 2 - 22), py = h / 2 - Math.sin(t) * (h / 2 - 11);
+    ctx.fillStyle = 'rgba(80,140,255,0.9)'; ctx.fillRect(px - 21, py - 9, 42, 18);
+    ctx.fillStyle = '#fff'; ctx.font = '600 11px system-ui'; ctx.fillText('USB', px, py + 4);
+  }
 }
 function opticsVerdict(A, rig) {
   const out = [], tag = tagH;
   const tp = A.tiltPct, side = sideName(A.gradAng), opp = sideName(A.gradAng + 180);
   out.push(tp < 10 ? `${tag('good', 'tilt OK')} star size changes only ${tp.toFixed(0)}% across the frame.`
-    : `${tag(tp < 20 ? 'warn' : 'bad', tp < 20 ? 'mild tilt' : 'tilt')} stars are about ${tp.toFixed(0)}% larger toward the <b>${side}</b> than the <b>${opp}</b> of the plot. If focus was set in the centre, this is the classic sign of a tilted sensor${tp >= 20 ? ': a tilt plate or shim on that side is worth it' : ''}.`);
+    : `${tag(tp < 20 ? 'warn' : 'bad', tp < 20 ? 'mild tilt' : 'tilt')} stars are about ${tp.toFixed(0)}% larger toward the <b>${side}</b> than the <b>${opp}</b> of the plot. One soft side usually means a tilted sensor (or collimation).`
+      + (A.map ? (() => { const hr = clockOf(A.gradAng, A.map), sc = screwAdvice(hr, parseScrews(A.map.screws));
+          return ` On the camera that is the <b>${hr} o'clock</b> side (looking at its back, USB port at 12)${sc ? `, nearest ${sc}` : ''}. The nudge test below confirms it and says which way to turn.`; })()
+        : ` <span class="note">To name the side of the camera body, run the one-time <i>Camera sides</i> test below.</span>`));
   const uniTxt = A.uniform >= 0.08;
   if (uniTxt) out.push(`${tag('warn', 'elongated everywhere')} stars are stretched in the same direction across the whole frame (${A.uniform.toFixed(2)} at ${Math.round(((A.uniAng % 180) + 180) % 180)}° on the plot, centre included): that points to <b>guiding, wind or flexure</b>, not the optics.`);
   const r = A.radial, edgeWorse = A.eOut != null && A.eIn != null && A.eOut - A.eIn > 0.04;
@@ -3662,24 +3725,34 @@ function opticsVerdict(A, rig) {
   if (A.fOut && A.fIn && A.fOut / A.fIn > 1.25 && Math.abs(r) < 0.05) out.push(`${tag('warn', 'soft corners')} corner stars are ${Math.round((A.fOut / A.fIn - 1) * 100)}% larger but still round: field curvature or spacing (flattener distance).`);
   return out;
 }
-let opticsLast = null;
+let opticsLast = null, opticsCur = null;
+async function analyseFile(file, g, msg) {
+  msg('Reading the FITS file…');
+  let img = await readFitsPlane(file);
+  const hdr = img.h, bayer = !!hdr.BAYERPAT || (g && camKind(g.c) === 'osc');
+  const f = bayer ? 2 : img.W > 7000 ? 2 : 1;
+  img = binImage(img, f);
+  msg(`Finding stars (${img.W}×${img.H}${f > 1 ? `, binned ${f}×${f}${bayer ? ' to remove the colour pattern' : ''}` : ''})…`);
+  await new Promise((res) => setTimeout(res, 30));
+  const res = measureStars(img);
+  const scale = g ? g.scale * f : (hdr.XPIXSZ && hdr.FOCALLEN ? 206.265 * hdr.XPIXSZ * f / hdr.FOCALLEN : 1);
+  return { A: analyseOptics(res, scale), res, f, scale, hdr };
+}
+function showOptics() {
+  const { A, res, f, scale, g, r, hdr } = opticsCur;
+  A.map = camMapFor(r, hdr);
+  drawOptics($('#optPlot'), res, A);
+  $('#optVerdict').innerHTML = `<p class="note">${A.n} stars · median FWHM ${(A.medF * scale).toFixed(2)}″ (${A.medF.toFixed(1)} px${f > 1 ? ' binned' : ''})${g ? '' : ' · pick the rig for arc-seconds'}</p>` + opticsVerdict(A, g).map((x) => `<p>${x}</p>`).join('');
+}
 async function runOptics(file) {
   const msg = (t) => { $('#optMsg').innerHTML = t; };
   const r = state.rigs.find((x) => x.id === $('#optRig').value), g = r && rigGeom(r);
   try {
-    msg('Reading the FITS file…');
-    let img = await readFitsPlane(file);
-    const bayer = !!img.h.BAYERPAT || (g && camKind(g.c) === 'osc');
-    const f = bayer ? 2 : img.W > 7000 ? 2 : 1;
-    img = binImage(img, f);
-    msg(`Finding stars (${img.W}×${img.H}${f > 1 ? `, binned ${f}×${f}${bayer ? ' to remove the colour pattern' : ''}` : ''})…`);
-    await new Promise((res) => setTimeout(res, 30));
-    const res = measureStars(img);
-    const scale = g ? g.scale * f : (img.h.XPIXSZ && img.h.FOCALLEN ? 206.265 * img.h.XPIXSZ * f / img.h.FOCALLEN : 1);
-    const A = analyseOptics(res, scale);
+    const { A, res, f, scale, hdr } = await analyseFile(file, g, msg);
     if (A.error) { msg(A.error); $('#optOut').hidden = true; return; }
-    drawOptics($('#optPlot'), res, A);
-    $('#optVerdict').innerHTML = `<p class="note">${A.n} stars · median FWHM ${(A.medF * scale).toFixed(2)}″ (${A.medF.toFixed(1)} px${f > 1 ? ' binned' : ''})${g ? '' : ' · pick the rig for arc-seconds'}</p>` + opticsVerdict(A, g).map((x) => `<p>${x}</p>`).join('');
+    opticsCur = { A, res, f, scale, g, r, hdr };
+    $('#optNudgeMsg').innerHTML = $('#optNudgeMsg').dataset.orig || ($('#optNudgeMsg').dataset.orig = $('#optNudgeMsg').innerHTML);
+    showOptics();
     $('#optOut').hidden = false; msg('');
     opticsLast = { rig: r?.id, at: Date.now(), name: file.name, tilt: Math.round(A.tiltPct), radial: +A.radial.toFixed(3), uniform: +A.uniform.toFixed(3), fwhm: +(A.medF * scale).toFixed(2) };
     const hist = (() => { try { return JSON.parse(localStorage.getItem('mrp.optics') || '[]'); } catch { return []; } })();
@@ -3700,8 +3773,53 @@ function opticsSetup() {
   renderOpticsHistory();
 }
 $('#optFile').addEventListener('change', (e) => { const f = e.target.files?.[0]; if (f) runOptics(f); e.target.value = ''; });
-$('#optRig').addEventListener('change', renderOpticsHistory);
-opticsSetup();
+$('#optRig').addEventListener('change', () => { renderOpticsHistory(); camSidesRender(); });
+opticsSetup(); camSidesRender();
+$('#optNudgeBtn').addEventListener('click', () => $('#optNudge').click());
+$('#optNudge').addEventListener('change', async (e) => {
+  const file = e.target.files?.[0]; e.target.value = ''; if (!file || !opticsCur) return;
+  const out = $('#optNudgeMsg'), msg = (t) => { out.innerHTML = t; };
+  try {
+    const { A: B } = await analyseFile(file, opticsCur.g, msg), A = opticsCur.A;
+    if (B.error) { msg(B.error); return; }
+    // Moving the sensor inward sharpens whatever part of it sat behind focus (too far from the telescope) and blurs the
+    // part in front. So the change in the size gradient points from the far side to the near side, wherever focus was.
+    const grew = B.c[0] / A.c[0], dx = (B.c[1] / B.c[0] - A.c[1] / A.c[0]) * 200, dy = (B.c[2] / B.c[0] - A.c[2] / A.c[0]) * 200;
+    const amt = Math.hypot(dx, dy), farAng = Math.atan2(-dy, -dx) * R2D;   // side that improved = too far from the telescope
+    const hr = A.map ? clockOf(farAng, A.map) : null, opp = hr ? (hr + 5) % 12 + 1 : null;
+    const far = hr ? `the <b>${hr} o'clock</b> side of the camera` : `the <b>${sideName(farAng)}</b> side of the plot`;
+    const sc = hr ? screwAdvice(hr, parseScrews(A.map.screws)) : '';
+    let txt = `Centre stars ${grew >= 1 ? '+' : ''}${Math.round((grew - 1) * 100)}%; one side changed ${amt.toFixed(0)}% more than the other. `;
+    if (grew < 1.05) txt += `${tagH('warn', 'focus barely moved')} centre stars hardly changed, so this can't tell the direction. Move the focuser further in and try again.`;
+    else if (amt < 5) txt += `${tagH('good', 'no measurable tilt')} both sides went soft together, so the sensor is square to the light path. Anything you saw on the plot is more likely collimation or seeing.`;
+    else txt += `${tagH(amt < 12 ? 'warn' : 'bad', amt < 12 ? 'slight tilt' : 'tilt')} moving in sharpened ${far}, so it sits <b>too far from the telescope</b>${hr ? ` (and ${opp} o'clock too close)` : ''}. Bring that side <b>closer</b>${sc ? ` with ${sc}` : ''}: on a push–pull tilt plate, loosen its push screw about ⅛ turn, then snug its pull screw.${hr ? '' : ' Run the <i>Camera sides</i> test to name the side of the camera body.'}`;
+    msg(txt + ' Refocus on the centre and check again; repeat until both sides change equally.');
+  } catch (err) { msg(esc(err.message || 'Could not analyse that file.')); }
+});
+$('#camSidesPick').addEventListener('click', () => $('#camSidesFile').click());
+$('#camSidesFile').addEventListener('change', async (e) => {
+  const files = [...(e.target.files || [])]; e.target.value = '';
+  const msg = (t) => { $('#camSidesMsg').innerHTML = t; };
+  const r = state.rigs.find((x) => x.id === $('#optRig').value); if (!r) return;
+  if (files.length !== 2) { msg('Pick both frames together (port side and 3 o\'clock).'); return; }
+  try {
+    files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));   // taken in order → named in order
+    const imgs = await Promise.all(files.map(readFitsPlane)), d = imgs.map(darkSide);
+    if (d.some((x) => x == null)) { msg('One frame has no clearly shaded half. Shade about half the window and use an exposure that is not saturated.'); return; }
+    let diff = ((d[1] - d[0]) % 360 + 360) % 360;
+    if (diff !== 90 && diff !== 270) { msg('Both frames are shaded on the same or opposite sides: the second card should come in at 90° to the first.'); return; }
+    const old = state.camSides[r.cam];
+    state.camSides[r.cam] = { port: d[0], mirror: diff === 90, rowOrder: rowOrd(imgs[0].h), screws: old?.screws || '' };
+    saveStore(); camSidesRender();
+    msg(`${tagH('good', 'saved')} USB port side is the <b>${sideName(d[0])}</b> of the plot.`);
+    if (opticsCur && opticsCur.r?.cam === r.cam) showOptics();
+  } catch (err) { msg(esc(err.message || 'Could not read those files.')); }
+});
+$('#camScrews').addEventListener('change', (e) => {
+  const r = state.rigs.find((x) => x.id === $('#optRig').value), m = r && state.camSides[r.cam]; if (!m) return;
+  m.screws = parseScrews(e.target.value).join(', '); e.target.value = m.screws; saveStore();
+  if (opticsCur && opticsCur.r?.cam === r.cam) showOptics();
+});
 
 /* ---------- Tabs ---------- */
 const TABS = ['frame', 'tonight', 'sky', 'gallery', 'gear'];
