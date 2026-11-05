@@ -45,6 +45,11 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Targets you have already imaged are marked ✓ imaged and ranked lower: your Private images count for everyone on their own device; the public gallery counts only on the owner's unlocked devices
 - Pick a target from the dropdown to load it; for mosaics the rig's grid and rotation are set for you
 
+## Local horizon (trees, buildings)
+
+- Sky tab → **Horizon**: enter how high obstructions reach in eight directions, or import an *azimuth altitude* skyline file (N.I.N.A. `.hrz`, Stellarium). Saved per observing site (within 5 km), so a flat site stays flat
+- The altitude chart shades the obstruction in the target's direction through the night and reports hours clear of it (and hours lost). Tonight's picks, comets and the forecast verdict count only clear time; the *On target* row shows `tree` when it is hidden
+
 ## Filters
 
 - Add your filters under Equipment: type (narrowband Hα / OIII / SII or a full set, LRGB set, dual-band, light-pollution, UV/IR cut), size (1.25″ to 50 mm) and optional bandwidth
@@ -98,6 +103,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 ## Your data
 
 - Equipment, rigs, filters, settings, default location and images are saved **only in your own browser** — nothing is uploaded, and other users never see or change your setup
+- One address: settings live per web address, so `www.fovplanner.com` and the old github.io copy hand their settings to `fovplanner.com` once (merged if both have a setup) and then redirect. Private images stay at the old address until exported (`?stay` opens it)
 - Export / Import a backup file (optionally with images) to keep a copy, move to another device, or share your setup with friends
 - Anonymous usage statistics via GoatCounter (no cookies, no personal data)
 

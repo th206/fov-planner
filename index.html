@@ -65,6 +65,9 @@
   .rig { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 8px; padding: 9px; background: var(--panel-2); display: flex; flex-direction: column; gap: 7px; }
   .rig + .rig { margin-top: 8px; }
   .rig.off { opacity: .55; }
+  .hzgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
+  .hzgrid label { display: flex; flex-direction: column; font-size: 11.5px; color: var(--muted); gap: 2px; }
+  .hzgrid input { width: 100%; min-width: 0; }
   .optplot { width: 100%; height: auto; border-radius: 8px; margin: 8px 0 4px; border: 1px solid var(--line); }
   .satbox { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
   .satbox .row { gap: 6px; align-items: center; } .satbox select { max-width: 200px; }
@@ -285,6 +288,69 @@
     aside { border-right: none; overflow: visible; padding: 12px 16px; }
   }
 </style>
+<script>
+/* One home for everyone's data. Browsers keep saved settings per web address, so the same person on www.fovplanner.com,
+   fovplanner.com and the old github.io copy had three separate setups, and an address they had never used showed the
+   starter gear. Old addresses now hand their settings to fovplanner.com and redirect; fovplanner.com merges them in. */
+(function () {
+  var KEYS = ['mrp.v1', 'mrp.optics', 'mrp.tab', 'mrp.wxAdv', 'mrp.gkey', 'mrp.tgtOpen'];
+  var host = location.hostname, old = host === 'www.fovplanner.com' || /\.github\.io$/i.test(host);
+  var enc = function (o) { return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+  var dec = function (t) { return JSON.parse(decodeURIComponent(escape(atob(t.replace(/-/g, '+').replace(/_/g, '/'))))); };
+  try {
+    if (old && !/[?&]stay\b/.test(location.search)) {
+      // hand the settings over once; later visits just redirect (so rigs deleted at the new address don't come back)
+      var d = {}; if (!localStorage.getItem('mrp.movedAt')) KEYS.forEach(function (k) { var v = localStorage.getItem(k); if (v != null) d[k] = v; });
+      if (Object.keys(d).length) localStorage.setItem('mrp.movedAt', String(Date.now()));
+      var go = function (n) {
+        var rest = location.hash.slice(1);
+        location.replace('https://fovplanner.com/' + (Object.keys(d).length
+          ? '#migrate=' + enc({ d: d, n: n, from: location.origin + location.pathname }) + (rest ? '&then=' + encodeURIComponent(rest) : '')
+          : (rest ? '#' + rest : '')));
+      };
+      if (!Object.keys(d).length) return go(0);
+      var t = setTimeout(function () { go(0); }, 1500);   // don't hang on a slow IndexedDB
+      try {
+        var r = indexedDB.open('mrp-images');
+        r.onupgradeneeded = function () { r.transaction.abort(); };   // no image library here: don't create one
+        r.onsuccess = function () { var db = r.result; try { var q = db.transaction('images').objectStore('images').count(); q.onsuccess = function () { clearTimeout(t); go(q.result); }; q.onerror = function () { clearTimeout(t); go(0); }; } catch (e) { clearTimeout(t); go(0); } };
+        r.onerror = function () { clearTimeout(t); go(0); };
+      } catch (e) { clearTimeout(t); go(0); }
+      return;
+    }
+    var m = location.hash.match(/^#migrate=([^&]+)(?:&then=(.*))?$/);
+    if (!m) return;
+    var p = dec(m[1]), inc = p.d || {}, mine = localStorage.getItem('mrp.v1'), merged = false;
+    // a setup here that is still just the starter gear (opened once, never edited) doesn't count
+    var starter = function (o) {
+      var combos = (o.rigs || []).map(function (r) { return r.scope + '/' + r.cam + '/' + (+r.factor || 1) + '/' + (+r.cols || 1) * (+r.rows || 1); }).join(',');
+      var custom = (o.scopes || []).concat(o.cams || []).some(function (x) { return String(x.id).length >= 6; });
+      return !custom && !(o.filters || []).length && !(o.horizons || []).length && combos === 'n10/a2600/1/1,c925/a533/1/1,z61/a294/1/1';
+    };
+    try { if (mine && starter(JSON.parse(mine))) mine = null; } catch (e) {}
+    if (!mine) { Object.keys(inc).forEach(function (k) { if (KEYS.indexOf(k) >= 0) localStorage.setItem(k, inc[k]); }); }
+    else if (inc['mrp.v1'] && inc['mrp.v1'] !== mine) {
+      // both addresses have a setup: keep this one and add whatever the other has that this one lacks
+      var a = JSON.parse(mine), b = JSON.parse(inc['mrp.v1']);
+      var remap = { scopes: {}, cams: {} };
+      var addBy = function (key, same) { a[key] = a[key] || []; (b[key] || []).forEach(function (x) {
+        var hit = null; a[key].forEach(function (y) { if (!hit && same(x, y)) hit = y; });
+        if (hit) { if (remap[key]) remap[key][x.id] = hit.id; } else { a[key].push(x); merged = true; } }); };
+      addBy('scopes', function (x, y) { return x.id === y.id || (x.name === y.name && +x.fl === +y.fl); });
+      addBy('cams', function (x, y) { return x.id === y.id || (x.name === y.name && +x.wpx === +y.wpx); });
+      (b.rigs || []).forEach(function (r) { r.scope = remap.scopes[r.scope] || r.scope; r.cam = remap.cams[r.cam] || r.cam; });
+      addBy('filters', function (x, y) { return x.id === y.id || x.name === y.name; });
+      addBy('horizons', function (x, y) { return Math.abs(x.lat - y.lat) < 0.03 && Math.abs(x.lon - y.lon) < 0.03; });
+      addBy('rigs', function (x, y) { return x.scope === y.scope && x.cam === y.cam && (+x.factor || 1) === (+y.factor || 1); });
+      a.camSides = Object.assign({}, b.camSides || {}, a.camSides || {});
+      localStorage.setItem('mrp.v1', JSON.stringify(a));
+      KEYS.forEach(function (k) { if (k !== 'mrp.v1' && inc[k] != null && localStorage.getItem(k) == null) localStorage.setItem(k, inc[k]); });
+    }
+    history.replaceState(null, '', location.pathname + location.search + (m[2] ? '#' + decodeURIComponent(m[2]) : ''));
+    window.__mrpMoved = { n: p.n || 0, from: p.from || '', merged: merged, fresh: !mine };
+  } catch (e) { /* storage blocked or bad link: carry on normally */ }
+})();
+</script>
 <!-- Anonymous visitor statistics (GoatCounter: no cookies, no personal data) -->
 <script data-goatcounter="https://fovplanner.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
 </head>
@@ -446,6 +512,15 @@
           <button type="button" class="icon ghost" id="useDefault">↩ Back to default</button>
           <span class="note" id="locMsg"></span>
         </div>
+        <details class="oagbox" id="hzBox">
+          <summary>Horizon: trees &amp; buildings <span class="note" id="hzState"></span></summary>
+          <div class="note">How high the obstructions reach in each direction, in degrees above the horizon (0 = open). Saved for this place (within 5 km); visible hours, Tonight's picks and the forecast verdict then count only time when the target is clear of them.</div>
+          <div class="hzgrid" id="hzGrid"></div>
+          <div class="row"><button type="button" class="icon" id="hzSave">Save for this place</button>
+            <button type="button" class="icon ghost" id="hzFile">Import horizon file…</button><input type="file" id="hzFileIn" hidden accept=".hrz,.txt,.csv,.ini">
+            <button type="button" class="icon ghost" id="hzClear">Clear</button><span class="note" id="hzMsg"></span></div>
+          <div class="note">A horizon file has one <i>azimuth altitude</i> pair per line (N.I.N.A. <code>.hrz</code>, Stellarium <code>horizon.txt</code>); it can describe the skyline in much finer steps than the eight boxes.</div>
+        </details>
       </div>
       <div class="moonbox"><span id="moonIcon"></span><div class="mtext" id="moonText"></div></div>
       <div class="moonstrip" id="moonStrip" aria-label="Moon over the next two weeks — tap a night to plan it"></div>
@@ -696,7 +771,7 @@ function saveStore() {
   try {
     localStorage.setItem(KEY, JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay, camSides: state.camSides,
+      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay, camSides: state.camSides, horizons: state.horizons,
     }));
   } catch { /* storage unavailable */ }
 }
@@ -715,6 +790,7 @@ const state = {
   dust: saved.dust || 'auto',
   subLen: saved.subLen || 300,
   galOverlay: saved.galOverlay ?? true,
+  horizons: saved.horizons || [],   // [{lat, lon, name, pts: [[az, alt], …]}] trees/buildings per observing site
   camSides: saved.camSides || {},   // per camera id: {port, mirror, rowOrder, screws} — which way the camera body sits on the optics-check plot
   windBias: null,
   filters: saved.filters || [],
@@ -1558,7 +1634,7 @@ function computeTonight() {
   const moonUpHours = steps.filter((s) => s.moonUp).length * dt / 3600e3;
   const rigs = state.rigs.filter((r) => (o.rig === 'any' ? r.on : r.id === o.rig)).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g);
   const opt = { minFill: o.minFill, maxPanels: o.maxPanels };
-  const items = [], why = { small: 0, low: 0, hours: 0 };
+  const items = [], why = { small: 0, low: 0, hours: 0 }, hz = siteHorizon();
   for (const c of CAT) {
     if (!o.types.includes(TYPE_GROUP[c.t])) continue;
     if (90 - Math.abs(lat - c.dec) < o.minAlt) { why.low++; continue; }          // never gets high enough
@@ -1576,9 +1652,9 @@ function computeTonight() {
     const moonSensitive = o.avoidMoon && illum > 0.25 && (BROADBAND.has(c.t) || ['bb', 'uvir', 'lp'].includes(best.ft));
     let good = 0, peak = -90, peakMs = 0, moonSep = 180;
     for (const s of steps) {
-      const alt = altAz(c.ra, c.dec, s.ms, lat, lon);
+      const cl = skyClear(c.ra, c.dec, s.ms, o.minAlt, hz), alt = cl.alt;
       if (alt > peak) { peak = alt; peakMs = s.ms; }
-      if (alt < o.minAlt) continue;
+      if (!cl.ok) continue;
       const sep = angSep(c.ra, c.dec, s.mr, s.md); if (s.moonUp) moonSep = Math.min(moonSep, sep);
       if (moonSensitive && s.moonUp && sep < 30 + 60 * illum) continue;   // ~60° at half moon, 90° at full
       good += dt;
@@ -2189,6 +2265,57 @@ function sunRaDec(ms) {
   const lam = (L + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * D2R, eps = (23.439 - 4e-7 * n) * D2R;
   return [Math.atan2(Math.cos(eps) * Math.sin(lam), Math.cos(lam)) * R2D, Math.asin(Math.sin(eps) * Math.sin(lam)) * R2D];
 }
+/* ---------- Local horizon (trees, buildings) ---------- */
+const HZ_DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+function siteHorizon(site = state.site) {
+  let best = null, bd = 5;
+  for (const h of state.horizons) { const d = distKm(site.lat, site.lon, h.lat, h.lon); if (d < bd) { bd = d; best = h; } }
+  return best;
+}
+function horizonAlt(az, hz) {   // obstruction height at an azimuth, linear between points, wrapping through north
+  const p = hz?.pts; if (!p?.length) return 0;
+  if (p.length === 1) return p[0][1];
+  let i = p.findIndex(([a]) => a > az); if (i < 0) i = 0;
+  const [a1, h1] = p[(i - 1 + p.length) % p.length], [a2, h2] = p[i];
+  const span = ((a2 - a1) % 360 + 360) % 360 || 360, f = (((az - a1) % 360 + 360) % 360) / span;
+  return h1 + (h2 - h1) * f;
+}
+// altitude, obstruction and whether the object is usable (above both the trees and the minimum altitude)
+function skyClear(ra, dec, ms, minAlt, hz = siteHorizon()) {
+  const { lat, lon } = state.site, [alt, az] = altAzFull(ra, dec, ms, lat, lon), ob = horizonAlt(az, hz);
+  return { alt, az, ob, ok: alt >= minAlt && alt >= ob, blocked: alt >= minAlt && alt < ob };
+}
+function hzRender() {
+  const hz = siteHorizon();
+  const vals = HZ_DIRS.map((_, i) => Math.round(horizonAlt(i * 45, hz)));
+  $('#hzGrid').innerHTML = HZ_DIRS.map((d, i) => `<label>${d} <input type="number" min="0" max="89" step="1" data-hz="${i}" value="${hz ? vals[i] : ''}" placeholder="0"></label>`).join('');
+  $('#hzState').textContent = hz ? (hz.pts.length > 8 ? `· ${hz.pts.length}-point skyline saved` : `· saved: ${HZ_DIRS.map((d, i) => vals[i] ? `${d} ${vals[i]}°` : '').filter(Boolean).join(', ') || 'open'}`) : '· flat (none set)';
+}
+function hzStore(pts, msg) {
+  const s = state.site, old = siteHorizon();
+  state.horizons = state.horizons.filter((h) => h !== old);
+  if (pts) state.horizons.push({ lat: +s.lat.toFixed(4), lon: +s.lon.toFixed(4), name: s.name || '', pts: pts.sort((a, b) => a[0] - b[0]) });
+  saveStore(); hzRender(); $('#hzMsg').textContent = msg; setTimeout(() => { $('#hzMsg').textContent = ''; }, 3000);
+  drawAltChart(); scheduleTonight(); rerenderWeather();
+}
+$('#hzSave').addEventListener('click', () => {
+  const v = [...document.querySelectorAll('[data-hz]')].map((el) => Math.max(0, Math.min(89, parseFloat(el.value) || 0)));
+  const old = siteHorizon();
+  // keep a fine imported skyline unless a box was actually changed
+  if (old && old.pts.length > 8 && v.every((x, i) => Math.round(horizonAlt(i * 45, old)) === x)) { hzStore(old.pts, 'No change.'); return; }
+  hzStore(v.some((x) => x > 0) ? v.map((x, i) => [i * 45, x]) : null, v.some((x) => x > 0) ? 'Saved.' : 'Horizon is flat: nothing to save.');
+});
+$('#hzClear').addEventListener('click', () => hzStore(null, 'Cleared.'));
+$('#hzFile').addEventListener('click', () => $('#hzFileIn').click());
+$('#hzFileIn').addEventListener('change', async (e) => {
+  const f = e.target.files?.[0]; e.target.value = ''; if (!f) return;
+  const pts = (await f.text()).split(/\r?\n/).map((l) => l.replace(/[#;].*/, '').trim()).filter(Boolean)
+    .map((l) => l.split(/[\s,;=]+/).map(Number)).filter((x) => x.length >= 2 && isFinite(x[0]) && isFinite(x[1]) && x[0] >= 0 && x[0] <= 360 && x[1] > -10 && x[1] < 90)
+    .map(([a, h]) => [a % 360, Math.max(0, h)]);
+  if (pts.length < 2) { $('#hzMsg').textContent = 'No “azimuth altitude” lines found in that file.'; return; }
+  hzStore(pts, `Imported ${pts.length} points.`);
+});
+hzRender();
 function drawAltChart() {
   const cv = $('#altChart'), dpr = window.devicePixelRatio || 1;
   const W = cv.clientWidth, H = cv.clientHeight; if (!W) return;
@@ -2212,18 +2339,28 @@ function drawAltChart() {
   ctx.setLineDash([3, 3]); ctx.strokeStyle = '#ffb45488'; ctx.beginPath(); ctx.moveTo(padL, Y(30)); ctx.lineTo(W - 4, Y(30)); ctx.stroke(); ctx.setLineDash([]);
   for (let h = 0; h <= 16; h += 2) { const lh = (16 + h) % 24; ctx.fillText(String(lh).padStart(2, '0'), X(t0 + h * 3600e3) - 6, H - 3); }
   const t = state.target; if (!t) { $('#altSum').textContent = ''; return; }
-  ctx.strokeStyle = '#6ea8ff'; ctx.lineWidth = 2; ctx.beginPath();
-  let good = 0, peak = -90, peakT = t0;
+  const hz = siteHorizon(), minA = state.tn.minAlt || 30, pts = [];
+  let good = 0, lost = 0, peak = -90, peakT = t0;
   for (let i = 0; i <= N; i++) {
-    const ms = t0 + i * dt, alt = altAz(t.ra, t.dec, ms, lat, lon);
-    const [sr, sd] = sunRaDec(ms); if (altAz(sr, sd, ms, lat, lon) < -18 && alt > 30) good += dt;
-    if (alt > peak) { peak = alt; peakT = ms; }
-    i ? ctx.lineTo(X(ms), Y(alt)) : ctx.moveTo(X(ms), Y(alt));
+    const ms = t0 + i * dt, c = skyClear(t.ra, t.dec, ms, minA, hz);
+    const [sr, sd] = sunRaDec(ms), dark = altAz(sr, sd, ms, lat, lon) < -18;
+    if (dark && c.ok) good += dt; if (dark && c.blocked) lost += dt;
+    if (c.alt > peak) { peak = c.alt; peakT = ms; }
+    pts.push([ms, c]);
   }
-  ctx.stroke();
+  if (hz) {   // the trees/buildings in the direction the target is at each moment
+    ctx.fillStyle = 'rgba(60,140,80,0.35)'; ctx.beginPath(); ctx.moveTo(X(t0), Y(0));
+    for (const [ms, c] of pts) ctx.lineTo(X(ms), Y(c.ob));
+    ctx.lineTo(X(t0 + span), Y(0)); ctx.closePath(); ctx.fill();
+  }
+  ctx.lineWidth = 2;
+  for (let i = 1; i < pts.length; i++) {   // blue where usable, grey where below the limit or behind obstructions
+    const [m0, c0] = pts[i - 1], [m1, c1] = pts[i];
+    ctx.strokeStyle = c1.ok ? '#6ea8ff' : '#6ea8ff55'; ctx.beginPath(); ctx.moveTo(X(m0), Y(c0.alt)); ctx.lineTo(X(m1), Y(c1.alt)); ctx.stroke();
+  }
   const lt = new Date(peakT + tz * 3600e3);
   setTimeout(renderSats, 0);
-  $('#altSum').innerHTML = `Highest ${peak.toFixed(0)}° at ${String(lt.getUTCHours()).padStart(2, '0')}:${String(lt.getUTCMinutes()).padStart(2, '0')} · <b style="color:var(--text)">${(good / 3600e3).toFixed(1)} h</b> above 30° in astronomical darkness`;
+  $('#altSum').innerHTML = `Highest ${peak.toFixed(0)}° at ${String(lt.getUTCHours()).padStart(2, '0')}:${String(lt.getUTCMinutes()).padStart(2, '0')} · <b style="color:var(--text)">${(good / 3600e3).toFixed(1)} h</b> above ${minA}°${hz ? ' and clear of obstructions' : ''} in astronomical darkness${lost >= 1800e3 ? ` <span class="note">(${(lost / 3600e3).toFixed(1)} h lost behind trees/buildings)</span>` : ''}`;
 }
 
 /* ---------- Weather & seeing (Open-Meteo) ---------- */
@@ -2507,7 +2644,7 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
   if (dark.every((h) => val('cloud_cover', h.ms) == null)) { box.innerHTML = '<span class="note">No forecast for this date yet — forecasts reach about 2 weeks ahead.</span>'; return; }
   const minAlt = state.tn.minAlt || 30, tName = t ? esc(normId(t.mainId || t.name)) : '';
   const rigs = state.rigs.filter((r) => r.on).map((r) => ({ r, g: rigGeom(r), sc: scopeById(r.scope) })).filter((x) => x.g && x.sc);
-  const REASON = { cloud: 'cloud', rain: 'rain', wind: 'too windy', seeing: 'poor seeing', low: `${tName || 'target'} below ${minAlt}°` };
+  const REASON = { cloud: 'cloud', rain: 'rain', wind: 'too windy', seeing: 'poor seeing', low: `${tName || 'target'} below ${minAlt}°${siteHorizon() ? ' or behind trees' : ''}` };
   const lines = [];
   let bestAll = 0;
   for (const { r, g, sc } of rigs) {
@@ -2516,7 +2653,7 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
       const cl = val('cloud_cover', h.ms), rp = val('precipitation_probability', h.ms), mm = val('precipitation', h.ms), gu = gustAt(h.ms);
       const see = t && h.tAlt > 10 ? h.tSee : h.see?.total;
       const fails = [];
-      if (t && !(h.tAlt >= minAlt)) fails.push('low');
+      if (t && (!(h.tAlt >= minAlt) || h.tBlocked)) fails.push('low');
       if (cl != null && cl >= 60) fails.push('cloud');
       if ((mm != null && mm >= 0.1) || (rp != null && rp >= 50)) fails.push('rain');
       if (gu != null && gu > lim * 1.3) fails.push('wind');
@@ -2563,12 +2700,13 @@ function renderWeather(w, a, t0, t1, c) {
   const W = hourlyLookup(w), Aq = hourlyLookup(a), Cm = hourlyLookup(c);
   const { lat, lon, tz } = state.site;
   const elev = w.elevation || 0;
-  const t = state.target;
+  const t = state.target, hz = siteHorizon();
   const hours = [];
   for (let ms = t0; ms < t1; ms += 3600e3) {
     const mid = ms + 1800e3, [sr, sd] = sunRaDec(mid);
     const h = { ms, dark: altAz(sr, sd, mid, lat, lon) < -18, see: seeingAt(W, ms, elev) };
-    h.tAlt = t ? altAz(t.ra, t.dec, mid, lat, lon) : null;
+    const cl = t ? skyClear(t.ra, t.dec, mid, 0, hz) : null;
+    h.tAlt = cl ? cl.alt : null; h.tBlocked = !!cl && cl.alt > 0 && cl.alt < cl.ob;
     h.tSee = h.see && h.tAlt > 10 ? Math.min(6, h.see.total * airmassFactor(h.tAlt)) : null;
     hours.push(h);
   }
@@ -2613,7 +2751,7 @@ function renderWeather(w, a, t0, t1, c) {
     ['Cloud %',  (ms) => val('cloud_cover', ms), (v) => grade(v, 20, 60), (v) => Math.round(v)],
     null,
     ['Seeing ″', (ms) => H[ms].see?.total, seeCls, seeFmt, (ms) => { const s = H[ms].see; return s ? `Zenith ${s.total.toFixed(2)}″ · free air ${s.free.toFixed(2)}″ · mostly ${LAYER_NAME[s.main]}` : ''; }],
-    ...(t ? [['On target', (ms) => H[ms].tSee, seeCls, seeFmt, (ms) => H[ms].tAlt > 10 ? `${normId(t.mainId || t.name)} at ${H[ms].tAlt.toFixed(0)}° altitude` : 'below 10°']] : []),
+    ...(t ? [['On target', (ms) => H[ms].tBlocked ? -1 : H[ms].tSee, (v) => v < 0 ? 'b' : seeCls(v), (v) => v < 0 ? 'tree' : seeFmt(v), (ms) => H[ms].tAlt > 10 ? `${normId(t.mainId || t.name)} at ${H[ms].tAlt.toFixed(0)}° altitude${H[ms].tBlocked ? ', behind trees/buildings' : ''}` : 'below 10°']] : []),
     ['Transp.',  transpAt, (v) => (v === 0 ? 'g' : v === 1 ? 'w' : 'b'), (v) => (v === 0 ? '✓' : v === 1 ? '~' : '✕'),
                  (ms) => { const a = Aq('aerosol_optical_depth', ms), v = val('visibility', ms); return `${['Good', 'Hazy', 'Poor'][transpAt(ms)] || ''} · AOD ${a != null ? a.toFixed(2) : '—'} · visibility ${v != null ? (v / 1000).toFixed(0) + ' km' : '—'}`; }],
     null,
@@ -2914,7 +3052,7 @@ function renderLoc() {
 function siteChanged(debounced) {
   clearTimeout(siteChanged.t); siteChanged.t = setTimeout(updateSky, debounced ? 800 : 0);
   scheduleTonight(); renderMoon();
-  renderLoc(); drawAltChart();
+  renderLoc(); hzRender(); drawAltChart();
   if (state.target) { renderTarget(); }
   debounced ? scheduleWeather() : loadWeather();
 }
@@ -3103,7 +3241,7 @@ async function loadComets() {
 }
 function computeComets() {
   if (!cometList) return [];
-  const { lat, lon } = state.site, { t0, t1 } = nightWindow(), minAlt = state.tn.minAlt || 30;
+  const { lat, lon } = state.site, { t0, t1 } = nightWindow(), minAlt = state.tn.minAlt || 30, hz = siteHorizon();
   const steps = [];
   for (let ms = t0; ms <= t1; ms += 20 * 60e3) { const [sr, sd] = sunRaDec(ms); if (altAz(sr, sd, ms, lat, lon) < -18) steps.push(ms); }
   if (!steps.length) return [];
@@ -3113,7 +3251,7 @@ function computeComets() {
     const p = cometRaDec(c, mid);
     if (p.mag == null || p.mag > COMET_MAG) continue;
     let good = 0, peak = -90, peakMs = mid;
-    for (const ms of steps) { const a = altAz(p.ra, p.dec, ms, lat, lon); if (a > peak) { peak = a; peakMs = ms; } if (a >= minAlt) good += 20; }
+    for (const ms of steps) { const a = altAz(p.ra, p.dec, ms, lat, lon); if (a > peak) { peak = a; peakMs = ms; } if (skyClear(p.ra, p.dec, ms, minAlt, hz).ok) good += 20; }
     if (good < 30) continue;
     const p2 = cometRaDec(c, mid + 3600e3);
     const rate = angSep(p.ra, p.dec, p2.ra, p2.dec) * 3600 / 60;   // ″ per minute
@@ -4063,12 +4201,23 @@ for (const [sel, ev, name, once] of [
 ]) $(sel)?.addEventListener(ev, () => track(name, once));
 $('main').addEventListener('drop', () => track('image-add'));
 
-// Old GitHub Pages address: point people to the new home and help them carry their setup over
-if (/github\.io$/i.test(location.hostname)) {
+// Old address opened with ?stay (to export images): help them carry the rest over by hand
+if ((/github\.io$/i.test(location.hostname) || location.hostname === 'www.fovplanner.com')) {
   $('#movedBanner').hidden = false;
   $('#movedExport').addEventListener('click', () => { $('#exportImgs').checked = true; exportBackup(); track('moved-export'); });
   $('#movedClose').addEventListener('click', () => { $('#movedBanner').hidden = true; });
 }
+
+// Just arrived from an old address: say what happened
+if (window.__mrpMoved) {
+  const mv = window.__mrpMoved, b = $('#movedBanner');
+  b.querySelector('div').innerHTML = `Your setup from <b>${esc(mv.from.replace(/^https?:\/\//, ''))}</b> ${mv.fresh ? 'has been moved here' : mv.merged ? 'has been added to the one already here' : 'matches the one already here'}. Please use <b>fovplanner.com</b> from now on.`
+    + (mv.n ? ` ${mv.n} private image${mv.n > 1 ? 's are' : ' is'} still stored at the old address: <a href="${esc(mv.from)}?stay">open it</a> and use <i>Export my setup</i> (with images), then <i>Import backup</i> here.` : '');
+  b.hidden = false; $('#movedClose').addEventListener('click', () => { b.hidden = true; });
+  track('moved-auto');
+}
+// Ask the browser not to clear this site's storage when space runs low (and Safari not to expire it)
+try { navigator.storage?.persist?.(); } catch {}
 
 renderRigs();
 renderLoc();
