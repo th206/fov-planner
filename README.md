@@ -12,7 +12,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 
 ## Tonight at a glance
 
-- A plain **GO / MAYBE / NO-GO** answer at the top of Tonight and Conditions: GO needs a window of 3 h+ good hours for at least one rig (and the loaded target), MAYBE a shorter or marginal one; it names the window, the reason and the rig, with sunset, astronomical night, sunrise and the Moon-free stretch
+- A plain **GO / MAYBE / NO-GO** answer at the top of Tonight and Conditions: based on the sky alone (cloud, rain, seeing overhead, and wind against your most wind-tolerant rig). GO needs 3 h+ of good sky in a row, MAYBE a shorter or marginal window; the loaded target only adds how much of that window it is usable. Shown with sunset, astronomical night, sunrise and the Moon-free stretch
 
 - One line per rig with the best window of the night, e.g. "good 22:00–03:00 (5 h) · clear · seeing 1.4″ · wind OK", or the main reason there is none (cloud, rain, wind, seeing, or the target too low)
 - Uses the loaded target's altitude, cloud, rain, the worst-case gusts against each telescope's wind limit, and the seeing estimate

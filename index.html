@@ -2831,7 +2831,7 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
   const rigs = state.rigs.filter((r) => r.on).map((r) => ({ r, g: rigGeom(r), sc: scopeById(r.scope) })).filter((x) => x.g && x.sc);
   const REASON = { cloud: 'cloud', rain: 'rain', wind: 'too windy', seeing: 'poor seeing', low: `${tName || 'target'} below ${minAlt}°${siteHorizon() ? ' or behind trees' : ''}` };
   const lines = [];
-  let bestAll = 0, top = null; const whyAll = {};
+  let bestAll = 0;
   for (const { r, g, sc } of rigs) {
     const lim = windLimit(sc), why = {};
     const grade = dark.map((h) => {
@@ -2854,7 +2854,6 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
     if (!n) { [n, a, b] = run(1); kind = n ? 'marginal' : 'none'; }
     const dot = `<span class="rigdot" style="--c:${r.color}"></span>`;
     const name = `${esc(sc.name)} + ${esc(g.c.name)}`;
-    Object.entries(why).forEach(([k, v]) => { whyAll[k] = (whyAll[k] || 0) + v; });
     if (kind === 'none') {
       const main = Object.entries(why).sort((x, y) => y[1] - x[1])[0]?.[0];
       lines.push(`${dot}<b>${name}</b> <span class="tag bad">no good window</span> <span class="note">${main ? 'mostly ' + REASON[main] : ''}</span>`);
@@ -2870,8 +2869,6 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
       seeMed != null ? `seeing ${seeMed.toFixed(1)}″` : null,
       gmax ? (gmax <= lim ? 'wind OK' : `gusts ${Math.round(gmax)} km/h`) : null].filter(Boolean).join(' · ');
     const end = span[span.length - 1].ms + 3600e3;
-    const score = kind === 'good' ? n : n / 2;
-    if (!top || score > top.score) top = { score, kind, n, from: span[0].ms, to: end, name, bits };
     lines.push(`${dot}<b>${name}</b> <span class="tag ${kind === 'good' ? 'good' : 'warn'}">${kind === 'good' ? 'good' : 'marginal'} ${hhmm(span[0].ms)}–${hhmm(end)} (${n} h)</span> <span class="note">${bits}</span>`);
   }
   const head = !rigs.length ? 'Turn on a rig to see its night.' : bestAll >= 5 ? '<span class="tag good">Great night</span>' : bestAll >= 2 ? '<span class="tag good">Good night</span>'
@@ -2880,15 +2877,41 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
     illum > 0.25 ? `Moon ${Math.round(illum * 100)}% lit` : 'dark Moon',
     cmpSpread >= 30 ? '<span class="tag warn">models disagree</span> treat with care' : null].filter(Boolean).join(' · ');
   box.innerHTML = `<div class="vhead">${rigs.length ? '' : head + ' '}<span class="note">${notes}</span></div>${lines.map((l) => `<div class="vline">${l}</div>`).join('')}`;
-  // one plain answer: GO with a solid window (3 h+ of good hours), MAYBE for a short or marginal one, NO-GO otherwise
-  const main = Object.entries(whyAll).sort((x, y) => y[1] - x[1])[0]?.[0];
-  const forT = t ? ` for ${tName}` : '';
+  // GO / NO-GO is about the sky, not the target: cloud, rain, wind (against your most wind-tolerant rig) and seeing overhead.
+  // The target only adds a note on how much of the clear window it is usable.
+  const lim = rigs.length ? Math.max(...rigs.map((x) => windLimit(x.sc))) : 30, skyWhy = {};
+  const sg = dark.map((h) => {
+    const cl = val('cloud_cover', h.ms), rp = val('precipitation_probability', h.ms), mm = val('precipitation', h.ms), gu = gustAt(h.ms), see = h.see?.total;
+    const f = [];
+    if (cl != null && cl >= 60) f.push('cloud');
+    if ((mm != null && mm >= 0.1) || (rp != null && rp >= 50)) f.push('rain');
+    if (gu != null && gu > lim * 1.3) f.push('wind');
+    if (see != null && see > 4) f.push('seeing');
+    f.forEach((k) => { skyWhy[k] = (skyWhy[k] || 0) + 1; });
+    if (f.length) return 0;
+    return (cl != null && cl >= 30) || (gu != null && gu > lim) || (see != null && see > 2.8) || (rp != null && rp >= 25) ? 1 : 2;
+  });
+  const runOf = (minG) => { let best = [0, -1, -1], s0 = -1; sg.forEach((v, k) => { if (v >= minG) { if (s0 < 0) s0 = k; if (k - s0 + 1 > best[0]) best = [k - s0 + 1, s0, k]; } else s0 = -1; }); return best; };
+  let [sn, sa, sb] = runOf(2), skind = 'good';
+  if (sn < 3) { const m = runOf(1); if (m[0] > sn) { [sn, sa, sb] = m; skind = 'marginal'; } }
+  const REASON_SKY = { cloud: 'cloud', rain: 'rain', wind: 'too windy for your rigs', seeing: 'poor seeing' };
   let g;
-  if (!rigs.length) g = null;
-  else if (top && top.kind === 'good' && top.n >= 3) g = { go: 'go', text: `${hhmm(top.from)}–${hhmm(top.to)}${forT} (${top.n} h): ${top.bits}${rigs.length > 1 ? ` · best on ${top.name}` : ''}` };
-  else if (top) g = { go: 'maybe', text: `${top.kind === 'good' ? 'Short' : 'Marginal'} window ${hhmm(top.from)}–${hhmm(top.to)}${forT} (${top.n} h): ${top.bits}` };
-  else g = { go: 'no', text: `No usable window${forT}: mostly ${REASON[main] || 'poor conditions'}.` };
-  if (g && cmpSpread >= 30 && g.go === 'go') g.text += ' · models disagree, check again later';
+  if (!sn) { const main = Object.entries(skyWhy).sort((x, y) => y[1] - x[1])[0]?.[0]; g = { go: 'no', text: `No usable window tonight: mostly ${REASON_SKY[main] || 'poor conditions'}.` }; }
+  else {
+    const span = dark.slice(sa, sb + 1), from = span[0].ms, to = span[span.length - 1].ms + 3600e3;
+    const cl = Math.max(...span.map((h) => val('cloud_cover', h.ms) ?? 0)), gm = Math.max(...span.map((h) => gustAt(h.ms) ?? 0));
+    const sees = span.map((h) => h.see?.total).filter((x) => x != null).sort((x, y) => x - y), seeMed = sees.length ? sees[Math.floor(sees.length / 2)] : null;
+    const bits = [cl < 20 ? 'clear' : cl < 50 ? `cloud to ${Math.round(cl)}%` : 'cloudy at times', seeMed != null ? `seeing ${seeMed.toFixed(1)}″ overhead` : null,
+      gm ? (gm <= lim ? 'wind OK' : `gusts ${Math.round(gm)} km/h`) : null].filter(Boolean).join(' · ');
+    const go = skind === 'good' && sn >= 3 ? 'go' : 'maybe';
+    let txt = `${go === 'go' ? 'Clear window' : skind === 'good' ? 'Short window' : 'Marginal sky'} ${hhmm(from)}–${hhmm(to)} (${sn} h): ${bits}`;
+    if (t) {
+      const up = span.filter((h) => h.tAlt >= minAlt && !h.tBlocked).length;
+      txt += up === span.length ? ` · ${tName} is up for all of it` : up ? ` · ${tName} is usable for ${up} h of it` : ` · ${tName} is not up then: pick another target`;
+    }
+    if (cmpSpread >= 30 && go === 'go') txt += ' · models disagree, check again later';
+    g = { go, text: txt };
+  }
   renderGo(g);
 }
 const LAYER_NAME = { ground: 'ground layer (<1 km)', low: 'low air (1–3 km)', mid: 'mid air (3–8 km)', high: 'jet / tropopause (>8 km)' };
