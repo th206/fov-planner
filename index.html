@@ -2818,7 +2818,10 @@ function renderGo(g) {
   const html = (g ? `<span class="go ${cls}">${word}</span>` : '') + `<div>${g ? `<b style="color:var(--text)">${g.text}</b><br>` : ''}<span class="note">${night}${moon}</span></div>`;
   for (const id of ['#goBox', '#goBoxT']) { const el = $(id); if (el) el.innerHTML = html; }
 }
-function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
+function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum, Cm }) {
+  // cloud for the verdict: the middle of the four models (your chosen one plus ECMWF, ICON, GFS), so one outlier can't flip the night
+  const cloudAll = (ms) => [val('cloud_cover', ms), ...(Cm ? CMP_MODELS.map((m) => Cm('cloud_cover_' + m.id, ms)) : [])].filter((x) => x != null);
+  const cloudAt = (ms) => { const v = cloudAll(ms).sort((a, b) => a - b); return v.length >= 3 ? (v[(v.length - 1) >> 1] + v[v.length >> 1]) / 2 : v[0] ?? null; };
   const box = $('#verdict'); if (!box) return;
   const hhmm = (ms) => { const d = new Date(ms + tz * 3600e3); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
   const dark = hours.filter((h) => h.dark);
@@ -2835,7 +2838,7 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
   for (const { r, g, sc } of rigs) {
     const lim = windLimit(sc), why = {};
     const grade = dark.map((h) => {
-      const cl = val('cloud_cover', h.ms), rp = val('precipitation_probability', h.ms), mm = val('precipitation', h.ms), gu = gustAt(h.ms);
+      const cl = cloudAt(h.ms), rp = val('precipitation_probability', h.ms), mm = val('precipitation', h.ms), gu = gustAt(h.ms);
       const see = t && h.tAlt > 10 ? h.tSee : h.see?.total;
       const fails = [];
       if (t && (!(h.tAlt >= minAlt) || h.tBlocked)) fails.push('low');
@@ -2861,7 +2864,7 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
     }
     bestAll = Math.max(bestAll, kind === 'good' ? n : n / 2);
     const span = dark.slice(a, b + 1);
-    const cl = Math.max(...span.map((h) => val('cloud_cover', h.ms) ?? 0));
+    const cl = Math.max(...span.map((h) => cloudAt(h.ms) ?? 0));
     const sees = span.map((h) => (t && h.tAlt > 10 ? h.tSee : h.see?.total)).filter((x) => x != null).sort((x, y) => x - y);
     const seeMed = sees.length ? sees[Math.floor(sees.length / 2)] : null;
     const gmax = Math.max(...span.map((h) => gustAt(h.ms) ?? 0));
@@ -2881,7 +2884,7 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
   // The target only adds a note on how much of the clear window it is usable.
   const lim = rigs.length ? Math.max(...rigs.map((x) => windLimit(x.sc))) : 30, skyWhy = {};
   const sg = dark.map((h) => {
-    const cl = val('cloud_cover', h.ms), rp = val('precipitation_probability', h.ms), mm = val('precipitation', h.ms), gu = gustAt(h.ms), see = h.see?.total;
+    const cl = cloudAt(h.ms), rp = val('precipitation_probability', h.ms), mm = val('precipitation', h.ms), gu = gustAt(h.ms), see = h.see?.total;
     const f = [];
     if (cl != null && cl >= 60) f.push('cloud');
     if ((mm != null && mm >= 0.1) || (rp != null && rp >= 50)) f.push('rain');
@@ -2899,7 +2902,7 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
   if (!sn) { const main = Object.entries(skyWhy).sort((x, y) => y[1] - x[1])[0]?.[0]; g = { go: 'no', text: `No usable window tonight: mostly ${REASON_SKY[main] || 'poor conditions'}.` }; }
   else {
     const span = dark.slice(sa, sb + 1), from = span[0].ms, to = span[span.length - 1].ms + 3600e3;
-    const cl = Math.max(...span.map((h) => val('cloud_cover', h.ms) ?? 0)), gm = Math.max(...span.map((h) => gustAt(h.ms) ?? 0));
+    const cl = Math.max(...span.map((h) => cloudAt(h.ms) ?? 0)), gm = Math.max(...span.map((h) => gustAt(h.ms) ?? 0));
     const sees = span.map((h) => h.see?.total).filter((x) => x != null).sort((x, y) => x - y), seeMed = sees.length ? sees[Math.floor(sees.length / 2)] : null;
     const bits = [cl < 20 ? 'clear' : cl < 50 ? `cloud to ${Math.round(cl)}%` : 'cloudy at times', seeMed != null ? `seeing ${seeMed.toFixed(1)}″ overhead` : null,
       gm ? (gm <= lim ? 'wind OK' : `gusts ${Math.round(gm)} km/h`) : null].filter(Boolean).join(' · ');
@@ -2909,7 +2912,11 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
       const up = span.filter((h) => h.tAlt >= minAlt && !h.tBlocked).length;
       txt += up === span.length ? ` · ${tName} is up for all of it` : up ? ` · ${tName} is usable for ${up} h of it` : ` · ${tName} is not up then: pick another target`;
     }
-    if (cmpSpread >= 30 && go === 'go') txt += ' · models disagree, check again later';
+    // name an outlier model instead of letting it worry the answer
+    const odd = span.map((h) => { const v = cloudAll(h.ms); return v.length >= 3 ? v.filter((x) => x >= 60).length : 0; });
+    const nOdd = Math.max(...odd);
+    if (nOdd === 1) txt += ' · one of the four models shows cloud, the others agree it is clear';
+    else if (nOdd >= 2 || (cmpSpread >= 30 && go === 'go')) txt += ' · models disagree, check again later';
     g = { go, text: txt };
   }
   renderGo(g);
@@ -3078,7 +3085,7 @@ function renderWeather(w, a, t0, t1, c) {
   const mainLayer = Object.entries(mains).sort((x, y) => y[1] - x[1])[0]?.[0];
   state.fcSeeing = seeT ?? seeZ;
   renderRigStats();
-  renderVerdict({ hours, val, gustAt, tz, t, cmpSpread: (() => { const v = c ? CMP_MODELS.map((m) => avg((ms) => Cm('cloud_cover_' + m.id, ms))).filter((x) => x != null) : []; return v.length >= 2 ? Math.max(...v) - Math.min(...v) : 0; })(), illum: moonPhase((t0 + t1) / 2).illum });
+  renderVerdict({ hours, val, gustAt, tz, t, Cm, cmpSpread: (() => { const v = c ? CMP_MODELS.map((m) => avg((ms) => Cm('cloud_cover_' + m.id, ms))).filter((x) => x != null) : []; return v.length >= 2 ? Math.max(...v) - Math.min(...v) : 0; })(), illum: moonPhase((t0 + t1) / 2).illum });
   if (cloud == null) { $('#wxSum').innerHTML = '<span class="note">No forecast data for this night.</span>'; return; }
   const tag = (c, txt) => `<span class="tag ${c}">${txt}</span>`;
   const sky = cloud < 20 ? tag('good', 'clear') : cloud < 50 ? tag('warn', 'partly cloudy') : tag('bad', 'cloudy');
