@@ -68,6 +68,10 @@
   .hzgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
   .hzgrid label { display: flex; flex-direction: column; font-size: 11.5px; color: var(--muted); gap: 2px; }
   .hzgrid input { width: 100%; min-width: 0; }
+  .gobox { display: flex; gap: 10px; align-items: flex-start; margin: 2px 0 10px; font-size: 13px; line-height: 1.5; }
+  .gobox:empty { display: none; }
+  .gobox .go { flex: none; font-weight: 800; font-size: 15px; letter-spacing: .04em; padding: 6px 10px; border-radius: 8px; color: #08101f; min-width: 64px; text-align: center; }
+  .gobox .go.g { background: #3fb950; } .gobox .go.w { background: #e3a63b; } .gobox .go.b { background: #e5534b; color: #fff; }
   .optplot { width: 100%; height: auto; border-radius: 8px; margin: 8px 0 4px; border: 1px solid var(--line); }
   .satbox { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
   .satbox .row { gap: 6px; align-items: center; } .satbox select { max-width: 200px; }
@@ -445,6 +449,7 @@
     <section data-tab="tonight" class="card" id="verdictCard">
       <h2>Tonight at a glance <span class="note" id="verdictWhen"></span></h2>
       <div class="loadedbar" id="loadedBar"></div>
+      <div id="goBoxT" class="gobox"></div>
       <div id="verdict" class="note">Waiting for the forecast…</div>
     </section>
 
@@ -504,6 +509,7 @@
 
     <section data-tab="sky" class="card">
       <h2><span>Conditions <span class="note" id="skyWhen" style="text-transform:none;letter-spacing:0"></span></span> <button class="icon ghost" id="wxReload" title="Refresh forecast">↻</button></h2>
+      <div id="goBox" class="gobox"></div>
       <div class="locbar">
         <div class="locname"><span id="locName">—</span> <span id="locTag"></span></div>
         <div id="skyBox" class="skybox"></div>
@@ -2782,6 +2788,36 @@ $('#week').addEventListener('click', (e) => {
 });
 
 /* ---------- Tonight at a glance: one line per rig, best clear window ---------- */
+// sunset/darkness/moon times for the chosen night, to the minute
+function nightTimes() {
+  const { lat, lon } = state.site, { t0, t1 } = nightWindow(), st = 2 * 60e3;
+  const sunAlt = (ms) => { const [r, d] = sunRaDec(ms); return altAz(r, d, ms, lat, lon); };
+  const moonAlt = (ms) => { const [r, d] = moonRaDec(ms); return altAz(r, d, ms, lat, lon); };
+  const cross = (f, lim) => { const out = []; let prev = f(t0);
+    for (let ms = t0 + st; ms <= t1; ms += st) { const v = f(ms); if ((prev < lim) !== (v < lim)) out.push({ ms: ms - st / 2, down: v < lim }); prev = v; } return out; };
+  const sr = cross(sunAlt, -0.833), set = sr.find((e) => e.down), rise = sr.find((e) => !e.down);   // upper limb with refraction
+  const ad = cross(sunAlt, -18), darkA = ad.find((e) => e.down)?.ms ?? (sunAlt(t0) < -18 ? t0 : null), darkB = ad.find((e) => !e.down)?.ms ?? (sunAlt(t1) < -18 ? t1 : null);
+  // moonless darkness: dark minutes with the Moon below the horizon, longest stretch
+  let best = null, a = null;
+  for (let ms = t0; ms <= t1; ms += st) {
+    const ok = sunAlt(ms) < -18 && moonAlt(ms) < 0;
+    if (ok && a == null) a = ms;
+    if ((!ok || ms + st > t1) && a != null) { const b = ok ? ms : ms - st; if (!best || b - a > best[1] - best[0]) best = [a, b]; a = null; }
+  }
+  return { set: set?.ms, rise: rise?.ms, darkA, darkB, moonless: best };
+}
+function renderGo(g) {
+  const fmt = (ms) => hhmms(ms), T = nightTimes();
+  const night = T.darkA != null && T.darkB != null
+    ? `Astronomical night <b>${fmt(T.darkA)}–${fmt(T.darkB)}</b> (${((T.darkB - T.darkA) / 3600e3).toFixed(1)} h)${T.set ? ` · sunset ${fmt(T.set)}` : ''}${T.rise ? ` · sunrise ${fmt(T.rise)}` : ''}`
+    : 'No astronomical darkness this night (the Sun stays above −18°).';
+  const moon = !T.moonless ? (T.darkA != null ? ' · the Moon is up all night' : '')
+    : (() => { const a = T.moonless[0] - T.darkA < 6e5, b = T.darkB - T.moonless[1] < 6e5;
+        return a && b ? ' · no Moon all night' : a ? ` · Moon-free until <b>${fmt(T.moonless[1])}</b> (moonrise)` : b ? ` · Moon-free from <b>${fmt(T.moonless[0])}</b> (moonset)` : ` · Moon-free ${fmt(T.moonless[0])}–${fmt(T.moonless[1])}`; })();
+  const [cls, word] = !g ? ['', ''] : g.go === 'go' ? ['g', 'GO'] : g.go === 'maybe' ? ['w', 'MAYBE'] : ['b', 'NO-GO'];
+  const html = (g ? `<span class="go ${cls}">${word}</span>` : '') + `<div>${g ? `<b style="color:var(--text)">${g.text}</b><br>` : ''}<span class="note">${night}${moon}</span></div>`;
+  for (const id of ['#goBox', '#goBoxT']) { const el = $(id); if (el) el.innerHTML = html; }
+}
 function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
   const box = $('#verdict'); if (!box) return;
   const hhmm = (ms) => { const d = new Date(ms + tz * 3600e3); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
@@ -2789,13 +2825,13 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
   const nightDate = $('#night').value;
   $('#verdictWhen').textContent = nightDate ? '· ' + new Date(nightDate + 'T12:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) : '';
   $('#skyWhen').textContent = nightDate ? `night of ${new Date(nightDate + 'T12:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })} (change under Tonight → Visibility)` : '';
-  if (!dark.length) { box.innerHTML = 'No astronomical darkness this night at this place.'; return; }
-  if (dark.every((h) => val('cloud_cover', h.ms) == null)) { box.innerHTML = '<span class="note">No forecast for this date yet — forecasts reach about 2 weeks ahead.</span>'; return; }
+  if (!dark.length) { box.innerHTML = 'No astronomical darkness this night at this place.'; renderGo({ go: 'no', text: 'No astronomical darkness tonight.' }); return; }
+  if (dark.every((h) => val('cloud_cover', h.ms) == null)) { box.innerHTML = '<span class="note">No forecast for this date yet — forecasts reach about 2 weeks ahead.</span>'; renderGo(null); return; }
   const minAlt = state.tn.minAlt || 30, tName = t ? esc(normId(t.mainId || t.name)) : '';
   const rigs = state.rigs.filter((r) => r.on).map((r) => ({ r, g: rigGeom(r), sc: scopeById(r.scope) })).filter((x) => x.g && x.sc);
   const REASON = { cloud: 'cloud', rain: 'rain', wind: 'too windy', seeing: 'poor seeing', low: `${tName || 'target'} below ${minAlt}°${siteHorizon() ? ' or behind trees' : ''}` };
   const lines = [];
-  let bestAll = 0;
+  let bestAll = 0, top = null; const whyAll = {};
   for (const { r, g, sc } of rigs) {
     const lim = windLimit(sc), why = {};
     const grade = dark.map((h) => {
@@ -2818,6 +2854,7 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
     if (!n) { [n, a, b] = run(1); kind = n ? 'marginal' : 'none'; }
     const dot = `<span class="rigdot" style="--c:${r.color}"></span>`;
     const name = `${esc(sc.name)} + ${esc(g.c.name)}`;
+    Object.entries(why).forEach(([k, v]) => { whyAll[k] = (whyAll[k] || 0) + v; });
     if (kind === 'none') {
       const main = Object.entries(why).sort((x, y) => y[1] - x[1])[0]?.[0];
       lines.push(`${dot}<b>${name}</b> <span class="tag bad">no good window</span> <span class="note">${main ? 'mostly ' + REASON[main] : ''}</span>`);
@@ -2833,6 +2870,8 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
       seeMed != null ? `seeing ${seeMed.toFixed(1)}″` : null,
       gmax ? (gmax <= lim ? 'wind OK' : `gusts ${Math.round(gmax)} km/h`) : null].filter(Boolean).join(' · ');
     const end = span[span.length - 1].ms + 3600e3;
+    const score = kind === 'good' ? n : n / 2;
+    if (!top || score > top.score) top = { score, kind, n, from: span[0].ms, to: end, name, bits };
     lines.push(`${dot}<b>${name}</b> <span class="tag ${kind === 'good' ? 'good' : 'warn'}">${kind === 'good' ? 'good' : 'marginal'} ${hhmm(span[0].ms)}–${hhmm(end)} (${n} h)</span> <span class="note">${bits}</span>`);
   }
   const head = !rigs.length ? 'Turn on a rig to see its night.' : bestAll >= 5 ? '<span class="tag good">Great night</span>' : bestAll >= 2 ? '<span class="tag good">Good night</span>'
@@ -2840,7 +2879,17 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum }) {
   const notes = [t ? `for <b>${tName}</b> above ${minAlt}°` : 'no target loaded: sky only',
     illum > 0.25 ? `Moon ${Math.round(illum * 100)}% lit` : 'dark Moon',
     cmpSpread >= 30 ? '<span class="tag warn">models disagree</span> treat with care' : null].filter(Boolean).join(' · ');
-  box.innerHTML = `<div class="vhead">${head} <span class="note">${notes}</span></div>${lines.map((l) => `<div class="vline">${l}</div>`).join('')}`;
+  box.innerHTML = `<div class="vhead">${rigs.length ? '' : head + ' '}<span class="note">${notes}</span></div>${lines.map((l) => `<div class="vline">${l}</div>`).join('')}`;
+  // one plain answer: GO with a solid window (3 h+ of good hours), MAYBE for a short or marginal one, NO-GO otherwise
+  const main = Object.entries(whyAll).sort((x, y) => y[1] - x[1])[0]?.[0];
+  const forT = t ? ` for ${tName}` : '';
+  let g;
+  if (!rigs.length) g = null;
+  else if (top && top.kind === 'good' && top.n >= 3) g = { go: 'go', text: `${hhmm(top.from)}–${hhmm(top.to)}${forT} (${top.n} h): ${top.bits}${rigs.length > 1 ? ` · best on ${top.name}` : ''}` };
+  else if (top) g = { go: 'maybe', text: `${top.kind === 'good' ? 'Short' : 'Marginal'} window ${hhmm(top.from)}–${hhmm(top.to)}${forT} (${top.n} h): ${top.bits}` };
+  else g = { go: 'no', text: `No usable window${forT}: mostly ${REASON[main] || 'poor conditions'}.` };
+  if (g && cmpSpread >= 30 && g.go === 'go') g.text += ' · models disagree, check again later';
+  renderGo(g);
 }
 const LAYER_NAME = { ground: 'ground layer (<1 km)', low: 'low air (1–3 km)', mid: 'mid air (3–8 km)', high: 'jet / tropopause (>8 km)' };
 const airmassFactor = (alt) => Math.pow(1 / Math.sin(Math.max(alt, 5) * D2R), 0.6);
