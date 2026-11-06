@@ -73,6 +73,9 @@
   .satbox .row { gap: 6px; align-items: center; } .satbox select { max-width: 200px; }
   .satstrip { display: flex; gap: 3px; flex-wrap: wrap; margin: 6px 0; }
   .sat { display: inline-flex; flex-direction: column; align-items: center; min-width: 36px; padding: 2px 3px; border-radius: 4px; font-size: 10.5px; color: rgba(0,0,0,.7); }
+  .sat.iss { outline: 2px solid #fff; outline-offset: -2px; }
+  .passes { margin: 4px 0 0; padding: 0; list-style: none; }
+  .passes li { margin: 3px 0; }
   .sat b { font-size: 10px; } .sat.g { background: #3fb950; } .sat.w { background: #e3a63b; } .sat.b { background: #e5534b; }
   .oagbox > summary { font-size: 12px; color: var(--muted); cursor: pointer; }
   .oagbox[open] { border-top: 1px solid var(--line); padding-top: 6px; }
@@ -453,9 +456,11 @@
         <div class="row"><b style="font-size:12.5px">Satellite trails</b> <span class="note">for</span>
           <input id="subLen" class="num" type="number" min="5" max="1800" step="5" style="width:60px"> <span class="note">s subs on</span> <select id="satRig"></select></div>
         <div id="satOut" class="note"></div>
+        <div id="satPasses" class="note" style="margin-top:8px"></div>
         <details class="info"><summary>ⓘ How this is estimated</summary><div class="wxnote">A model, not a pass list: it spreads today's large constellations (about 9,000 Starlink near 550 km, OneWeb near 1,200 km, Kuiper near 630 km and a few thousand other bright satellites and rocket bodies) over their orbits,
           checks whether satellites in the direction of your target are still lit by the Sun, and works out how many cross your field during one sub. Most trails appear in the hours after dusk and before dawn, when satellites are high in sunlight while you are in darkness; higher orbits stay lit longer.
-          Stacking with sigma clipping or a similar rejection removes nearly all trails.</div></details>
+          Stacking with sigma clipping or a similar rejection removes nearly all trails.
+          <br><br><b>ISS and Tiangong</b> are predicted individually from their current orbital elements (CelesTrak, refreshed twice a day): every pass that is sunlit while your sky is dark is listed, and one that comes within your frame is flagged. Their orbits are adjusted often, so the time can be off by a minute and the track by up to a degree — the flag allows for that.</div></details>
       </div>
     </section>
 
@@ -507,6 +512,11 @@
           <button type="submit" class="icon">Go</button>
           <button type="button" class="icon" id="geoBtn" title="Use this device's location">◎ My location</button>
         </form>
+        <div class="row">
+          <select id="placeSel" aria-label="Saved places" style="flex:1;min-width:0"></select>
+          <button type="button" class="icon ghost" id="placeSave" title="Add this place to your list">+ Save place</button>
+          <button type="button" class="icon ghost" id="placeDel" title="Remove this place from your list" hidden>✕</button>
+        </div>
         <div class="row">
           <button type="button" class="icon ghost" id="setDefault" title="Show conditions for this place every time the planner opens">★ Save as default</button>
           <button type="button" class="icon ghost" id="useDefault">↩ Back to default</button>
@@ -771,7 +781,7 @@ function saveStore() {
   try {
     localStorage.setItem(KEY, JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay, camSides: state.camSides, horizons: state.horizons,
+      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay, camSides: state.camSides, horizons: state.horizons, places: state.places,
     }));
   } catch { /* storage unavailable */ }
 }
@@ -790,6 +800,7 @@ const state = {
   dust: saved.dust || 'auto',
   subLen: saved.subLen || 300,
   galOverlay: saved.galOverlay ?? true,
+  places: saved.places || null,   // saved observing sites [{name, lat, lon, tz}]
   horizons: saved.horizons || [],   // [{lat, lon, name, pts: [[az, alt], …]}] trees/buildings per observing site
   camSides: saved.camSides || {},   // per camera id: {port, mirror, rowOrder, screws} — which way the camera body sits on the optics-check plot
   windBias: null,
@@ -802,6 +813,7 @@ const state = {
   center: [10.6847, 41.2690],
 };
 state.site = { ...state.defaultSite };
+if (!state.places) state.places = [{ ...state.defaultSite }];
 if (!state.tn.v2) { if (!state.tn.types.includes('snr')) state.tn.types.push('snr'); state.tn.v2 = true; }   // SNRs became their own category
 const scopeById = (id) => state.scopes.find((s) => s.id === id);
 /* Wind tolerance: wind load grows with tube size, and the guiding error that matters shrinks with focal length.
@@ -1515,10 +1527,26 @@ const OPTICAL_SNR = { '74.0-8.5': 'Cygnus Loop', '180.0-1.7': 'Simeis 147', '189
   '160.9+2.6': 'HB 9', '89.0+4.7': 'HB 21', '116.9+0.2': 'CTB 1 (Medulla)', '39.7-2.0': 'W50 (Manatee)', '166.0+4.3': 'VRO 42.05.01',
   '82.2+5.3': 'W63', '156.2+5.7': 'G156.2+5.7', '78.2+2.1': 'Gamma Cygni SNR', '205.5+0.5': 'Monoceros Loop', '69.0+2.7': 'CTB 80' };
 const LDN_NAMES = { 1622: 'Boogeyman Nebula', 1235: 'Shark Nebula' };
+// VizieR at CDS (Strasbourg) with the Harvard CfA mirror as fallback; whichever answered last is tried first next time
+const VIZ_HOSTS = ['https://vizier.cds.unistra.fr', 'https://vizier.cfa.harvard.edu'];
+async function vizierText(query, ms = 15000) {
+  let first = 0; try { first = Math.max(0, VIZ_HOSTS.indexOf(localStorage.getItem('mrp.viz'))); } catch {}
+  const order = [VIZ_HOSTS[first], ...VIZ_HOSTS.filter((_, i) => i !== first)];
+  let err;
+  for (const h of order) {
+    const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), ms);
+    try {
+      const r = await fetch(`${h}/viz-bin/asu-tsv?${query}`, { signal: ctl.signal });
+      if (!r.ok) throw new Error('VizieR ' + r.status);
+      const t = await r.text(); try { localStorage.setItem('mrp.viz', h); } catch {}
+      return t;
+    } catch (e) { err = e; } finally { clearTimeout(tm); }
+  }
+  throw err || new Error('VizieR unreachable');
+}
 async function vizier(src, cols) {
-  const r = await fetch(`https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=${src}&-out=${cols}&-out.max=3000&-oc.form=dec&-out.meta=-h-u-D`);
-  if (!r.ok) throw new Error('VizieR ' + r.status);
-  return (await r.text()).split('\n').filter((l) => l && !l.startsWith('#') && !l.startsWith('-')).map((l) => l.split('\t').map((x) => x.trim()));
+  const t = await vizierText(`-source=${src}&-out=${cols}&-out.max=3000&-oc.form=dec&-out.meta=-h-u-D`, 25000);
+  return t.split('\n').filter((l) => l && !l.startsWith('#') && !l.startsWith('-')).map((l) => l.split('\t').map((x) => x.trim()));
 }
 async function fetchExtCatalogs() {
   const [ldn, lbn, snr] = await Promise.all([
@@ -1732,7 +1760,6 @@ function swapAdvice(g) {          // the broadband filter to use instead, from t
 }
 function pickTonight(k) {
   const it = tnCache?.items[k]; if (!it) return;
-  setTab('frame');
   const { c, best } = it, f = best.f;
   // frame it: in single-rig mode, set that rig's mosaic and align the long side with the target
   if (state.tn.rig !== 'any' || f.kind === 'mosaic') {
@@ -1741,8 +1768,11 @@ function pickTonight(k) {
     if (c.min / c.maj < 0.8 || f.kind === 'mosaic') { const g = best.g; const longIsWidth = g.w >= g.h; r.rot = ((Math.round(c.pa + (longIsWidth ? -90 : 0)) % 180) + 180) % 180; }
     saveStore(); renderRigs();
   }
-  showCatalogTarget(c);
+  showCatalogTarget(c, false);
+  showVisibility();
 }
+// after loading from Tonight: stay on this tab and bring the altitude curve into view; "Frame it ▸" goes to the map
+function showVisibility() { requestAnimationFrame(() => $('#altChart')?.scrollIntoView({ behavior: 'smooth', block: 'center' })); }
 function showCatalogTarget(c, scroll = true) {
   const t = { name: c.id, mainId: c.id, ra: c.ra, dec: c.dec, typeDesc: TYPE_NAMES[c.t], mags: c.mag != null ? { V: c.mag } : {},
     aliases: [c.name, ...c.alt.split(' · ')].filter(Boolean) };
@@ -1760,7 +1790,9 @@ for (const [id, k] of [['#tnMinAlt', 'minAlt'], ['#tnMinFill', 'minFill'], ['#tn
 $('#tnMoon').addEventListener('change', (e) => { state.tn.avoidMoon = e.target.checked; saveStore(); renderTonight(); });
 $('#tnSort').addEventListener('change', (e) => { state.tn.sort = e.target.value; tnSel = 0; saveStore(); renderTonight(); });
 $('#tnPick').addEventListener('change', (e) => { tnSel = +e.target.value; renderTonight(); pickTonight(tnSel); });
-$('#tnList').addEventListener('click', (e) => { const el = e.target.closest('.tn-item'); if (el) pickTonight(+el.dataset.k); });
+$('#tnList').addEventListener('click', (e) => { const el = e.target.closest('.tn-item'); if (!el) return;
+  if (e.target.closest('.loadbtn[data-frame="1"]')) { setTab('frame'); return; }
+  pickTonight(+el.dataset.k); });
 $('#tnList').addEventListener('keydown', (e) => { if (e.key === 'Enter') { const el = e.target.closest('.tn-item'); if (el) pickTonight(+el.dataset.k); } });
 
 /* ---------- Target card ---------- */
@@ -2026,14 +2058,22 @@ function scheduleOag(now) { clearTimeout(oagTimer); oagTimer = setTimeout(update
 async function gaiaCone(ra, dec, radDeg, gmax) {
   const key = `${ra.toFixed(2)},${dec.toFixed(2)},${radDeg.toFixed(2)},${gmax}`;
   if (oagCache.has(key)) return oagCache.get(key);
-  const url = `https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=I/355/gaiadr3&-out=RA_ICRS,DE_ICRS,Gmag&-c=${encodeURIComponent(`${ra.toFixed(5)} ${dec >= 0 ? '+' : ''}${dec.toFixed(5)}`)}&-c.rd=${radDeg.toFixed(4)}&Gmag=${encodeURIComponent('<' + gmax)}&-out.max=2000&-oc.form=dec&-out.meta=-h-u-D`;
-  const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 15000);
+  // stars don't move: keep the last fields on this device, so the guide-star check also works offline at the site
+  const store = (() => { try { return JSON.parse(localStorage.getItem('mrp.gaia') || '{}'); } catch { return {}; } })();
+  const near = Object.entries(store).find(([k]) => { const [r2, d2, rad2, g2] = k.split(',').map(Number);
+    return rad2 >= radDeg && g2 >= gmax && angSep(ra, dec, r2, d2) + radDeg <= rad2 + 0.01; });
+  if (near) { const rows = near[1].rows.filter((s) => s.g < gmax && angSep(ra, dec, s.ra, s.dec) <= radDeg); oagCache.set(key, rows); return rows; }
+  const q = `-source=I/355/gaiadr3&-out=RA_ICRS,DE_ICRS,Gmag&-c=${encodeURIComponent(`${ra.toFixed(5)} ${dec >= 0 ? '+' : ''}${dec.toFixed(5)}`)}&-c.rd=${radDeg.toFixed(4)}&Gmag=${encodeURIComponent('<' + gmax)}&-out.max=2000&-oc.form=dec&-out.meta=-h-u-D`;
+  const rows = (await vizierText(q, 15000)).split('\n').filter((l) => l && !l.startsWith('#') && !l.startsWith('-') && /\d/.test(l[0] || ''))
+    .map((l) => l.split('\t').map(Number)).filter((x) => x.length >= 3 && x.every(Number.isFinite)).map(([ra, dec, g]) => ({ ra: +ra.toFixed(6), dec: +dec.toFixed(6), g: +g.toFixed(2) }));
+  oagCache.set(key, rows);
   try {
-    const r = await fetch(url, { signal: ctl.signal }); if (!r.ok) throw new Error('VizieR ' + r.status);
-    const rows = (await r.text()).split('\n').filter((l) => l && !l.startsWith('#') && !l.startsWith('-') && /\d/.test(l[0] || ''))
-      .map((l) => l.split('\t').map(Number)).filter((x) => x.length >= 3 && x.every(Number.isFinite)).map(([ra, dec, g]) => ({ ra, dec, g }));
-    oagCache.set(key, rows); return rows;
-  } finally { clearTimeout(tm); }
+    store[key] = { at: Date.now(), rows };
+    const keys = Object.keys(store).sort((a, b) => store[b].at - store[a].at);
+    for (const k of keys.slice(20)) delete store[k];   // the last 20 fields
+    localStorage.setItem('mrp.gaia', JSON.stringify(store));
+  } catch { /* storage full: fine */ }
+  return rows;
 }
 async function updateOag() {
   if (!aladin) return;
@@ -2053,7 +2093,7 @@ async function updateOag() {
     if (el) el.innerHTML = 'Looking up Gaia stars…';
     let stars;
     try { stars = await gaiaCone(ra0, dec0, ringOut, 15); }
-    catch { if (el) el.textContent = 'Could not reach the Gaia catalogue (CDS VizieR). Try again later.'; continue; }
+    catch { if (el) el.textContent = 'Could not reach the Gaia catalogue (tried VizieR at CDS and its Harvard mirror). Check the connection and try again; fields you checked before are kept on this device.'; continue; }
     const P = stars.map((s) => ({ ...s, p: proj(ra0, dec0, s.ra, s.dec) }));
     const inside = (rotDeg) => { const q = oagGeom(r, g, rotDeg); return P.filter((s) => { const [x, y] = rot([s.p[0] - q.c[0], s.p[1] - q.c[1]], -q.th); return Math.abs(x) <= q.hx && Math.abs(y) <= q.hy; }).sort((a, b) => a.g - b.g); };
     const now = inside(r.rot || 0);
@@ -2120,6 +2160,7 @@ function renderSats() {
   sel.innerHTML = rigs.map(({ r, g }) => `<option value="${r.id}">${esc(g.s.name)} + ${esc(g.c.name)}</option>`).join('');
   if (rigs.some((x) => x.r.id === keep)) sel.value = keep;
   const pick = rigs.find((x) => x.r.id === sel.value) || rigs[0];
+  if (brightLast.k !== passKey(t, pick?.g)) renderBrightPasses();      // ISS/Tiangong list shows even without a target
   if (!t || !pick) { out.textContent = t ? 'Turn on a rig to estimate trails.' : 'Load a target to estimate trails.'; return; }
   const { lat, lon, tz } = state.site, { t0, t1 } = nightWindow();
   const cells = [];
@@ -2130,15 +2171,123 @@ function renderSats() {
     if (lam == null) continue;
     const pr = 1 - Math.exp(-lam);
     const d = new Date(ms + tz * 3600e3);
-    cells.push({ lh: `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`, pr, lam });
+    cells.push({ ms, lh: `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`, pr, lam });
   }
   if (!cells.length) { out.textContent = 'The target is not up in darkness tonight.'; return; }
   const cls = (p) => (p < 0.1 ? 'g' : p < 0.35 ? 'w' : 'b');
   const quiet = cells.find((c, k) => c.pr < 0.1 && cells.slice(k).every((x) => x.pr < 0.15));
   const total = cells.reduce((a, c) => a + c.lam * 1800 / sub, 0);
-  out.innerHTML = `<div class="satstrip">${cells.map((c) => `<span class="sat ${cls(c.pr)}" title="${c.lh} — about ${Math.round(c.pr * 100)}% of ${sub} s subs get a trail (${c.lam.toFixed(2)} per sub)"><b>${c.lh}</b>${Math.round(c.pr * 100)}%</span>`).join('')}</div>
+  const hits = (brightLast.k === passKey(t, pick.g) ? brightLast.v?.passes || [] : []).filter((p) => p.hit);
+  const hitIn = (c) => hits.find((p) => p.hitMs >= c.ms && p.hitMs < c.ms + 1800e3);
+  out.innerHTML = `<div class="satstrip">${cells.map((c) => { const h = hitIn(c);
+    return `<span class="sat ${h ? 'b iss' : cls(c.pr)}" title="${c.lh} — about ${Math.round(c.pr * 100)}% of ${sub} s subs get a trail (${c.lam.toFixed(2)} per sub)${h ? ` · ${h.name} crosses your frame at ${hhmms(h.hitMs)}` : ''}"><b>${c.lh}</b>${h ? h.name : Math.round(c.pr * 100) + '%'}</span>`; }).join('')}</div>
     ${quiet ? `Share of subs with a trail drops under 10% from about <b>${quiet.lh}</b>.` : 'Trails stay common all night in this direction (higher orbits remain sunlit).'} Roughly ${Math.round(total)} trails over the whole night with this field.`;
 }
+
+/* ---------- ISS and Tiangong: individual pass predictions (SGP4 via satellite.js, elements from CelesTrak) ---------- */
+const BRIGHT_SATS = [[25544, 'ISS'], [48274, 'Tiangong']];
+let satLibP = null, brightLast = { k: '', v: null }, brightSeq = 0;
+function loadSatLib() {
+  return satLibP ||= new Promise((res, rej) => {
+    const el = document.createElement('script'); el.src = 'https://cdnjs.cloudflare.com/ajax/libs/satellite.js/5.0.0/satellite.min.js';
+    el.onload = () => (window.satellite ? res(window.satellite) : rej(new Error('satellite.js'))); el.onerror = () => { satLibP = null; rej(new Error('satellite.js')); };
+    document.head.appendChild(el);
+  });
+}
+async function brightTles() {
+  let st = null; try { st = JSON.parse(localStorage.getItem('mrp.tle') || 'null'); } catch {}
+  if (st && Date.now() - st.at < 12 * 3600e3 && st.sats?.length === BRIGHT_SATS.length) return st.sats;
+  try {
+    const sats = await Promise.all(BRIGHT_SATS.map(async ([id, name]) => {
+      const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 12000);
+      try {
+        const r = await fetch(`https://celestrak.org/NORAD/elements/gp.php?CATNR=${id}&FORMAT=TLE`, { signal: ctl.signal });
+        const L = (await r.text()).split(/\r?\n/).map((x) => x.trim()).filter(Boolean), l1 = L.find((x) => x.startsWith('1 ')), l2 = L.find((x) => x.startsWith('2 '));
+        if (!r.ok || !l1 || !l2) throw new Error('no elements');
+        return { id, name, l1, l2 };
+      } finally { clearTimeout(tm); }
+    }));
+    try { localStorage.setItem('mrp.tle', JSON.stringify({ at: Date.now(), sats })); } catch {}
+    return sats;
+  } catch (e) {
+    if (st && Date.now() - st.at < 7 * 86400e3) return st.sats;   // a few days old still gives the pass to within minutes
+    throw e;
+  }
+}
+const hhmms = (ms) => { const d = new Date(ms + state.site.tz * 3600e3); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
+const compass8 = (az) => ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(az / 45) % 8];
+function precessToDate(ra, dec, ms) {   // J2000 → equinox of date, first order (good to ~1″ here), to match the satellites' frame
+  const y = (ms - Date.UTC(2000, 0, 1, 12)) / (365.25 * 86400e3), m = 46.1 / 3600, n = 20.04 / 3600, r = ra * D2R, d = dec * D2R;
+  return [ra + (m + n * Math.sin(r) * Math.tan(d)) * y, dec + n * Math.cos(r) * y];
+}
+const passKey = (t, g) => `${t?.ra?.toFixed(3)},${t?.dec?.toFixed(3)},${g ? Math.max(g.mw, g.mh).toFixed(2) : ''},${state.site.lat},${state.site.lon},${nightWindow().t0}`;
+function brightPasses(sl, sats, t, g, t0, t1) {
+  const { lat, lon } = state.site, gd = { latitude: lat * D2R, longitude: lon * D2R, height: 0 };
+  const obsEcf = sl.geodeticToEcf(gd), Re = 6371;
+  const tgt = t ? precessToDate(t.ra, t.dec, (t0 + t1) / 2) : null;
+  const half = g ? Math.hypot(g.mw, g.mh) / 2 : 0;   // half-diagonal of the frame (deg)
+  const look = (rec, ms) => {
+    const dt = new Date(ms), pv = sl.propagate(rec, dt); if (!pv || !pv.position) return null;
+    const gm = sl.gstime(dt), o = sl.ecfToEci(obsEcf, gm), p = pv.position;
+    const rx = p.x - o.x, ry = p.y - o.y, rz = p.z - o.z, dist = Math.hypot(rx, ry, rz);
+    const ra = ((Math.atan2(ry, rx) * R2D) + 360) % 360, dec = Math.asin(rz / dist) * R2D;
+    const [alt, az] = altAzFull(ra, dec, ms, lat, lon);
+    const [sr, sd] = sunRaDec(ms), su = [Math.cos(sd * D2R) * Math.cos(sr * D2R), Math.cos(sd * D2R) * Math.sin(sr * D2R), Math.sin(sd * D2R)];
+    const along = p.x * su[0] + p.y * su[1] + p.z * su[2], perp = Math.sqrt(Math.max(0, p.x * p.x + p.y * p.y + p.z * p.z - along * along));
+    const lit = along > 0 || perp > Re;                                       // cylindrical Earth shadow
+    const dark = altAz(sr, sd, ms, lat, lon) < -6;
+    return { ms, ra, dec, alt, az, lit, dark, vis: alt > 10 && lit && dark, sep: tgt ? angSep(ra, dec, tgt[0], tgt[1]) : null };
+  };
+  const passes = [];
+  for (const s of sats) {
+    let rec; try { rec = sl.twoline2satrec(s.l1, s.l2); } catch { continue; }
+    let run = null;
+    for (let ms = t0; ms <= t1; ms += 20e3) {
+      const L = look(rec, ms); const v = L && L.vis;
+      if (v && !run) run = { s, from: ms - 20e3 };
+      if (!v && run) { run.to = ms; passes.push(run); run = null; }
+    }
+    if (run) { run.to = t1; passes.push(run); }
+  }
+  for (const p of passes) {   // refine each pass at 1-second steps: the ISS crosses a degree in about a second near the zenith
+    let first = null, last = null, peak = null, near = null; const rec = sl.twoline2satrec(p.s.l1, p.s.l2);
+    for (let ms = p.from; ms <= p.to; ms += 1000) {
+      const L = look(rec, ms); if (!L || !L.vis) continue;
+      first ||= L; last = L; if (!peak || L.alt > peak.alt) peak = L; if (L.sep != null && (!near || L.sep < near.sep)) near = L;
+    }
+    Object.assign(p, { name: p.s.name, first, last, peak, near });
+    p.hit = !!(near && half && near.sep <= half + 1);           // within the frame, allowing ~1° for element errors
+    p.hitMs = near?.ms; p.close = !!(near && near.sep <= 10);
+  }
+  return passes.filter((p) => p.first).sort((a, b) => a.first.ms - b.first.ms);
+}
+async function renderBrightPasses() {
+  const box = $('#satPasses'); if (!box) return;
+  const t = state.target, rigs = state.rigs.filter((r) => r.on).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g);
+  const pick = rigs.find((x) => x.r.id === $('#satRig').value) || rigs[0], g = pick?.g;
+  const key = passKey(t, g), seq = ++brightSeq;
+  let res = brightLast.k === key ? brightLast.v : null;
+  if (!res) {
+    box.textContent = 'Checking ISS and Tiangong passes…';
+    try {
+      const [sl, sats] = await Promise.all([loadSatLib(), brightTles()]);
+      const { t0, t1 } = nightWindow();
+      res = { passes: brightPasses(sl, sats, t, g, t0, t1) };
+    } catch { if (seq === brightSeq) box.textContent = 'ISS and Tiangong passes: could not load their orbits right now (CelesTrak). Try ↻ later.'; return; }
+    if (seq !== brightSeq) return;
+    brightLast = { k: key, v: res };
+    if (res.passes.some((p) => p.hit)) renderSats();   // mark the strip
+  }
+  const P = res.passes;
+  if (!P.length) { box.innerHTML = 'No visible ISS or Tiangong passes tonight.'; return; }
+  const tn = t ? esc(t.comet ? t.name : normId(t.mainId || t.name)) : '';
+  box.innerHTML = `<b style="color:var(--text)">Bright passes tonight</b> <span class="note">(sunlit while your sky is dark)</span><ul class="passes">` + P.map((p) => {
+    const where = !t ? '' : p.hit ? ` ${tagH('bad', `crosses your frame ~${hhmms(p.hitMs)}`)} — a bright trail in that sub; pause or drop it`
+      : p.close ? ` · passes ${p.near.sep.toFixed(0)}° from ${tn} at ${hhmms(p.near.ms)}` : '';
+    return `<li><b>${p.name}</b> ${hhmms(p.first.ms)}–${hhmms(p.last.ms)} · up to ${Math.round(p.peak.alt)}° · ${compass8(p.first.az)} → ${compass8(p.last.az)}${where}</li>`;
+  }).join('') + '</ul>';
+}
+
 $('#subLen').value = state.subLen || 300;
 $('#subLen').addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (v > 0) { state.subLen = v; saveStore(); renderSats(); } });
 $('#satRig').addEventListener('change', renderSats);
@@ -2486,14 +2635,14 @@ async function loadObs(force) {
         const ratio = Math.max(0.4, Math.min(3, (ow + 4) / (fw + 4)));   // +4 km/h keeps light winds from giving silly ratios
         state.windBias = { ratio, obs: ow, fc: fw, fcg: fg, station: d.station, km: d.km, at: obsMs };
         const word = ratio >= 1.3 ? tag('bad', `forecast ${ratio.toFixed(1)}× too low`) : ratio <= 0.75 ? tag('good', 'forecast a bit high') : tag('good', 'forecast on track');
-        biasTxt = `<br>Wind check: measured ${Math.round(ow)} km/h vs forecast ${Math.round(fw)} km/h for this hour → ${word}${ratio >= 1.3 ? ' <span class="note">· tonight\'s gusts are scaled up to match</span>' : ''}${d.km > 40 ? ` <span class="note">(the airport is ${Math.round(d.km)} km from your site, so treat this as a hint)</span>` : ''}`;
+        biasTxt = `<br>Wind check at the airport: measured ${Math.round(ow)} km/h vs ${Math.round(fw)} km/h forecast there for this hour → ${word}<span id="wxBiasNote"></span>`;
       }
     } catch { /* comparison is optional */ }
     if (seq !== obsSeq) return;
-    rerenderWeather();
     box.innerHTML = `<b>Observed now</b> <span class="note">at ${esc(d.name || d.station)} (${esc(d.station)}), ${Math.round(d.km)} km away, ${hhmm}:</span><br>${parts}
 ${biasTxt}
       <br><span class="note" title="Raw airport report (METAR)" style="font-family:ui-monospace,monospace;font-size:11px">${esc(d.raw)}</span>`;
+    rerenderWeather();   // after the box exists, so the table can explain its correction there
   } catch {
     obsLast.t = 0;
     if (seq === obsSeq) { box.innerHTML = ''; state.windBias = null; }
@@ -2735,6 +2884,13 @@ function renderWeather(w, a, t0, t1, c) {
     const wd = Math.max(0, 1 - (wb.km || 0) / 100), wt = Math.max(0, 1 - (ms - wb.at) / (8 * 3600e3));
     return 1 + (wb.ratio - 1) * wd * Math.min(1, wt); };
   const gustAt = (ms) => { const g = gustRaw(ms); return g == null ? undefined : g * biasF(ms); };
+  // say, under the airport line, what the table below does with it — so the two numbers can be compared
+  { const el = $('#wxBiasNote'), hr = Math.floor(nowMs / 3600e3) * 3600e3, w0 = val('wind_speed_10m', hr), f0 = biasF(hr);
+    if (el && wb) el.innerHTML = '<br><span class="note">' + (w0 == null || hr < t0 || hr >= t1
+      ? `The table below is for your site${wb.km > 5 ? `, ${Math.round(wb.km)} km away` : ''}${biasOn ? '; tonight\'s winds are raised to match, less with distance and time.' : '.'}`
+      : `At your site${wb.km > 5 ? ` (${Math.round(wb.km)} km away)` : ''} the forecast for this hour is ${Math.round(w0)} km/h` + (f0 > 1.01
+        ? `; the table raises it to <b>${Math.round(w0 * f0)} km/h</b> (×${f0.toFixed(2)}: the airport's ${wb.ratio.toFixed(1)}× counts for less the further away it is, and fades over ~8 h).`
+        : wb.ratio >= 1.3 ? `; the airport is too far away (or the report too old) to correct it, so the table shows the forecast as it is.` : ', as in the table.')) + '</span>'; }
   const aloftAt = (ms) => { const v = [val('wind_speed_80m', ms), val('wind_speed_120m', ms)].filter((x) => x != null); return v.length ? Math.max(...v) : undefined; };
   const rigScopes = [...new Map(state.rigs.filter((r) => r.on).map((r) => scopeById(r.scope)).filter(Boolean).map((sc) => [sc.id, sc])).values()];
   const short = (n) => (n.length > 11 ? n.slice(0, 10) + '…' : n);
@@ -3048,7 +3204,25 @@ function renderLoc() {
   $('#setDefault').style.display = isDef ? 'none' : '';
   $('#useDefault').style.display = isDef ? 'none' : '';
   for (const k of ['lat', 'lon', 'tz']) if (document.activeElement !== $('#' + k)) $('#' + k).value = s[k];
+  const cur = state.places.findIndex((p) => distKm(p.lat, p.lon, s.lat, s.lon) < 1);
+  $('#placeSel').innerHTML = (cur < 0 ? '<option value="">Saved places…</option>' : '') + state.places.map((p, i) =>
+    `<option value="${i}" ${i === cur ? 'selected' : ''}>${sameSite(p, d) ? '★ ' : ''}${esc(p.name || `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}`)}</option>`).join('');
+  $('#placeDel').hidden = cur < 0; $('#placeSave').hidden = cur >= 0;
 }
+$('#placeSel').addEventListener('change', (e) => {
+  const p = state.places[+e.target.value]; if (!p || e.target.value === '') return;
+  state.site = { ...p }; locMsg(''); siteChanged(false);
+});
+$('#placeSave').addEventListener('click', () => {
+  const s = state.site, name = prompt('Name for this place:', s.name || ''); if (name == null) return;
+  state.places.push({ name: name.trim() || s.name || `${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`, lat: s.lat, lon: s.lon, tz: s.tz });
+  state.site.name = state.places.at(-1).name; saveStore(); renderLoc(); locMsg('Saved to your places.'); setTimeout(() => locMsg(''), 2500);
+});
+$('#placeDel').addEventListener('click', () => {
+  const s = state.site, i = state.places.findIndex((p) => distKm(p.lat, p.lon, s.lat, s.lon) < 1); if (i < 0) return;
+  if (!confirm(`Remove “${state.places[i].name}” from your places?`)) return;
+  state.places.splice(i, 1); saveStore(); renderLoc();
+});
 function siteChanged(debounced) {
   clearTimeout(siteChanged.t); siteChanged.t = setTimeout(updateSky, debounced ? 800 : 0);
   scheduleTonight(); renderMoon();
@@ -3100,9 +3274,14 @@ function useMyLocation() {
   if (!navigator.geolocation) { locMsg('This browser cannot share its location.'); return; }
   locMsg('Finding your location…');
   navigator.geolocation.getCurrentPosition(
-    (p) => setSite(p.coords.latitude, p.coords.longitude),
+    async (p) => {
+      const acc = p.coords.accuracy || 0;
+      await setSite(p.coords.latitude, p.coords.longitude);
+      // laptops (and phones without GPS fix) locate themselves from the network: often the provider's city, tens of km off
+      if (acc > 3000) locMsg(`⚠ This device only knows its position to about ±${acc >= 10000 ? Math.round(acc / 1000) : (acc / 1000).toFixed(1)} km (from the network, not GPS), so the Bortle class and forecast may be for the wrong place. Pick a saved place or type the site's coordinates.`);
+    },
     (e) => locMsg(e.code === 1 ? 'Location permission was denied. Allow it in the browser settings, or type a place.' : 'Could not get your location. Try again or type a place.'),
-    { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 });
+    { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
 }
 $('#placeForm').addEventListener('submit', (e) => { e.preventDefault(); searchPlace($('#placeQ').value); });
 $('#geoBtn').addEventListener('click', useMyLocation);
@@ -3286,7 +3465,9 @@ function showComet(x) {
   track('comet');
 }
 $('#cometPick')?.addEventListener('change', (e) => { cometSel = +e.target.value; renderComets(); });
-$('#cometInfo')?.addEventListener('click', (e) => { const el = e.target.closest('[data-comet]'); if (el && cometCache[+el.dataset.comet]) { setTab('frame'); showComet(cometCache[+el.dataset.comet]); } });
+$('#cometInfo')?.addEventListener('click', (e) => { const el = e.target.closest('[data-comet]'); if (!el || !cometCache[+el.dataset.comet]) return;
+  if (e.target.closest('.loadbtn[data-frame="1"]')) { setTab('frame'); return; }
+  showComet(cometCache[+el.dataset.comet]); showVisibility(); });
 function findComet(q) {          // "C/2025 R2", "12P", "Tsuchinshan" …
   if (!cometList || q.length < 3) return null;
   const s = q.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -3304,7 +3485,7 @@ function markLoaded() {
   for (const el of document.querySelectorAll('.tn-item[data-key]')) {
     const on = !!k && el.dataset.key === k;
     el.classList.toggle('loaded', on);
-    const b = el.querySelector('.loadbtn'); if (b) b.textContent = on ? '✓ on the map' : 'Load ▸';
+    const b = el.querySelector('.loadbtn'); if (b) { b.textContent = on ? 'Frame it ▸' : 'Load ▸'; b.dataset.frame = on ? '1' : ''; b.title = on ? 'Open the map with this target' : 'Load it here and see its visibility'; }
   }
   const nm = t ? esc(t.comet ? t.name : normId(t.mainId || t.name)) : '';
   const kind = t ? (t.comet ? 'comet' : (t.typeDesc || '').toLowerCase()) : '';
@@ -4130,7 +4311,7 @@ $('#addCam').addEventListener('click', () => $('#camTbl tbody').insertAdjacentHT
 $('#eqDlg').addEventListener('click', (e) => { if (e.target.matches('[data-del]')) e.target.closest('tr').remove(); });
 
 /* ---------- Backup: export / import ---------- */
-const BACKUP_KEYS = ['scopes', 'cams', 'filters', 'rigs', 'survey', 'boost', 'tn', 'seeing', 'useFcSeeing', 'defaultSite', 'follow', 'wxModel', 'dust', 'galOverlay'];
+const BACKUP_KEYS = ['scopes', 'cams', 'filters', 'rigs', 'survey', 'boost', 'tn', 'seeing', 'useFcSeeing', 'defaultSite', 'follow', 'wxModel', 'dust', 'galOverlay', 'places', 'horizons', 'camSides', 'subLen'];
 const blobToDataUrl = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); });
 const dataUrlToBlob = async (u) => (await fetch(u)).blob();
 function downloadFile(name, text) {

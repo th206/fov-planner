@@ -45,6 +45,14 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Targets you have already imaged are marked ✓ imaged and ranked lower: your Private images count for everyone on their own device; the public gallery counts only on the owner's unlocked devices
 - Pick a target from the dropdown to load it; for mosaics the rig's grid and rotation are set for you
 
+## Bright passes (ISS, Tiangong)
+
+- Predicted from current orbital elements (CelesTrak, cached 12 h; SGP4 via satellite.js): every pass that is sunlit while your sky is dark, with times, height and direction. A pass that comes within your frame (allowing ~1° for element errors) is flagged, and its half-hour is marked in the trail strip
+
+## Places
+
+- Save several observing sites and switch between them from the list under the location; horizons are stored per site. *My location* warns when the device only knows its position roughly (laptops locate themselves from the network, which can put a dark site in the city)
+
 ## Local horizon (trees, buildings)
 
 - Sky tab → **Horizon**: enter how high obstructions reach in eight directions, or import an *azimuth altitude* skyline file (N.I.N.A. `.hrz`, Stellarium). Saved per observing site (within 5 km), so a flat site stays flat
@@ -94,6 +102,10 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Overlay your own plate-solved images: JPG/PNG + astrometry.net `wcs.fits` or ASTAP `.wcs`, or a FITS (mono or RGB, optionally with a separate `wcs.fits`)
 - Linear FITS data is auto-stretched; stretched data is shown as-is; unsolved FITS are placed approximately from RA/DEC + focal length + pixel size, with a rotation slider
 - Stored in your browser and shown automatically whenever that part of the sky is in view, with opacity and flip controls
+
+## Catalogue fallbacks
+
+- VizieR queries (Gaia guide stars, dark/bright nebulae, SNRs) fall back from CDS to the Harvard CfA mirror; the last 20 Gaia fields are kept on the device, so the guide-star check works offline at the site
 
 ## Optics check (Gear)
 
