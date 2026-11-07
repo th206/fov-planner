@@ -1258,7 +1258,7 @@ async function addImageFiles(files) {
     let hdr = headers.find((x) => !x.hasData && baseName(x.f.name) === bn)
       || (pics.length === 1 ? headers.find((x) => !x.hasData) || headers.find((x) => x.hasData) : null);
     const w0 = hdr && linearWcs(hdr.h);
-    if (!w0) { problems.push(`${pic.name}: no plate solution found`); continue; }
+    if (!w0) { problems.push(`${pic.name}: no plate solution found (an exported JPG/PNG doesn’t carry one: add its .wcs file with it, or for a gallery image use “Save to this browser” there)`); continue; }
     try {
       msg(`Adding ${pic.name}…`);
       const bmp = await loadBitmap(pic);
@@ -3634,7 +3634,7 @@ function showGalDetail(id) {
   const fp = it.wcs ? imgFootprint(it.wcs) : null;
   box.dataset.gid = id; box.hidden = false; $('#galGrid').hidden = true;
   box.innerHTML = `<div class="row" style="justify-content:space-between"><button type="button" class="icon ghost" data-gact="back">← All images</button>
-      ${it.wcs ? '<button type="button" class="icon" data-gact="map">⌖ Show on map</button>' : ''}</div>
+      <span>${it.wcs && it.wcs.w ? '<button type="button" class="icon ghost" data-gact="keep" title="Keep a copy with its plate solution in this browser’s private images (works offline)">⤓ Save to this browser</button> ' : ''}${it.wcs ? '<button type="button" class="icon" data-gact="map">⌖ Show on map</button>' : ''}</span></div>
     <a href="/g/${esc(it.id)}/image.jpg" target="_blank" rel="noopener" title="Open full size"><img class="big" src="/g/${esc(it.id)}/image.jpg" alt="${esc(it.title || '')}"></a>
     <h3 style="margin:4px 0">${esc(it.title || it.target || 'Untitled')}</h3>
     ${it.kind === 'ref' ? `<div class="note" style="margin-bottom:4px"><span class="tag warn">Reference image</span> Image: <b>${esc(it.credit || 'unknown')}</b>${it.license ? ` · ${esc(it.license)}` : ''}${it.source ? ` · <a href="${esc(it.source)}" target="_blank" rel="noopener noreferrer">source</a>` : ''}</div>` : ''}
@@ -3657,6 +3657,17 @@ $('#galDetail').addEventListener('click', async (e) => {
     setTab('frame');
     state.center = [fp.ra, fp.dec]; aladin?.gotoRaDec(fp.ra, fp.dec); aladin?.setFoV(Math.max(0.2, fp.radius * 2.4));
     drawFrames(); updateHud(); refreshImageLayers(true); track('gallery/map');
+  } else if (act === 'keep') {
+    const b = e.target.closest('[data-gact]');
+    try {
+      if ((await imgAll()).some((r) => r.galId === it.id)) { b.textContent = '✓ Already in this browser'; return; }
+      b.textContent = 'Saving…';
+      const r = await fetch(`/g/${it.id}/image.jpg`); if (!r.ok) throw new Error('download ' + r.status);
+      const blob = await r.blob(), bmp = await createImageBitmap(blob);
+      let w = galWcs(it); if (w.w && w.w !== bmp.width) w = scaleWcs(w, bmp.width / w.w);
+      await imgPut({ id: newId(), galId: it.id, name: it.title || it.target || 'Gallery image', blob, fmt: 'jpeg', wcs: w, flip: false, ...imgFootprint(w), on: true, opacity: 0.85, added: Date.now() });
+      b.textContent = '✓ Saved to this browser'; renderImageList(); scheduleTonight(); track('gallery/keep');
+    } catch (err) { b.textContent = '⤓ Save to this browser'; $('#galMsg').textContent = 'Could not save a copy: ' + (err.message || err); }
   } else if (act === 'edit') openGalDialog(it);
   else if (act === 'solve') { await startSolve(it, null); }
   else if (act === 'flip') {
