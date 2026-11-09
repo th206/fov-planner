@@ -107,6 +107,9 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 
 ## Catalogue fallbacks
 
+- The built-in catalogue has all 313 Sharpless objects (minus those already listed under an NGC/IC/Messier name); the planetary nebulae among them (Sh2-200, Sh2-188, Sh2-216, Sh2-274 Medusa, Sh2-290 Abell 31 …) are typed as planetaries, using SIMBAD's classification. VizieR falls back from CDS to the Harvard and Cape Town (IDIA) mirrors, and a mirror's error page counts as a failure
+- Tonight's list says when objects that fit are hidden by the *Min fill* setting
+
 - VizieR queries (Gaia guide stars, dark/bright nebulae, SNRs) fall back from CDS to the Harvard CfA mirror; the last 20 Gaia fields are kept on the device, so the guide-star check works offline at the site
 
 ## Optics check (Gear)
