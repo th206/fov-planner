@@ -482,6 +482,7 @@
         <div class="row" style="margin-top:8px">
           <label title="Minimum altitude to count as usable">Min alt <input id="tnMinAlt" class="num" type="number" min="0" max="80" step="5" style="width:50px">°</label>
           <label title="Hide targets that fill less than this share of the frame">Min fill <input id="tnMinFill" class="num" type="number" min="1" max="90" step="5" style="width:50px">%</label>
+          <label title="Planetary nebulae have faint outer halos much larger than their catalogue size, so they get their own, lower limit">Planetaries <input id="tnMinFillPn" class="num" type="number" min="0" max="90" step="1" style="width:46px">%</label>
           <label title="Hide targets that need more mosaic panels than this">Max panels <input id="tnMaxPanels" class="num" type="number" min="1" max="16" step="1" style="width:46px"></label>
         </div>
         <div class="row" style="margin-top:6px">
@@ -812,7 +813,7 @@ const state = {
   windBias: null,
   filters: saved.filters || [],
   boost: saved.boost ?? 30,
-  tn: { rig: 'any', types: ['gal', 'neb', 'snr', 'pn'], minAlt: 30, minFill: 15, maxPanels: 4, avoidMoon: true, sort: 'best', ...(saved.tn || {}) },
+  tn: { rig: 'any', types: ['gal', 'neb', 'snr', 'pn'], minAlt: 30, minFill: 15, minFillPn: 3, maxPanels: 4, avoidMoon: true, sort: 'best', ...(saved.tn || {}) },
   fcSeeing: null,
   target: null,          // {name, ra, dec, ...}
   size: null,            // {maj, min, pa} arcmin
@@ -1638,7 +1639,7 @@ function tonightSetup() {
   $('#tnRig').innerHTML = `<option value="any" ${o.rig === 'any' ? 'selected' : ''}>Any of my rigs</option>` + rigs.join('');
   if (o.rig !== 'any' && !state.rigs.some((r) => r.id === o.rig)) o.rig = 'any';
   $('#tnTypes').innerHTML = GROUPS.map(([k, l]) => `<button type="button" class="chip ${o.types.includes(k) ? 'on' : ''}" data-g="${k}">${l}</button>`).join('');
-  $('#tnMinAlt').value = o.minAlt; $('#tnMinFill').value = o.minFill; $('#tnMaxPanels').value = o.maxPanels; $('#tnMoon').checked = o.avoidMoon; $('#tnSort').value = o.sort;
+  $('#tnMinAlt').value = o.minAlt; $('#tnMinFill').value = o.minFill; $('#tnMinFillPn').value = o.minFillPn ?? 3; $('#tnMaxPanels').value = o.maxPanels; $('#tnMoon').checked = o.avoidMoon; $('#tnSort').value = o.sort;
 }
 // Targets *this viewer* has already imaged: their own photos only. The public gallery belongs to the site owner, so it
 // counts only on a device unlocked with the upload key; everyone's Private images (kept in their own browser) count for them.
@@ -1669,7 +1670,7 @@ function computeTonight() {
   const illum = (1 - Math.cos(angSep(sr, sd, mr, md) * D2R)) / 2;
   const moonUpHours = steps.filter((s) => s.moonUp).length * dt / 3600e3;
   const rigs = state.rigs.filter((r) => (o.rig === 'any' ? r.on : r.id === o.rig)).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g);
-  const opt = { minFill: o.minFill, maxPanels: o.maxPanels };
+  const opt = { minFill: o.minFill, maxPanels: o.maxPanels }, optPn = { ...opt, minFill: o.minFillPn ?? 3 };   // planetaries: own limit (faint halos)
   const items = [], why = { small: 0, low: 0, hours: 0, tiny: 0 }, hz = siteHorizon();
   for (const c of CAT) {
     if (!o.types.includes(TYPE_GROUP[c.t])) continue;
@@ -1679,14 +1680,14 @@ function computeTonight() {
       const ft = filterById(r.filter) && fType(filterById(r.filter));
       // galaxies/clusters want a broadband filter: a narrowband/dual-band rig can still shoot them after a filter swap, so keep them but prefer rigs that need no swap
       const swap = (ft === 'nb' || ft === 'dual') && BROADBAND.has(c.t);   // ft is grouped: Hα/OIII/SII count as 'nb'
-      const f = fitFor(c, g, opt); if (!f) continue;
+      const f = fitFor(c, g, TYPE_GROUP[c.t] === 'pn' ? optPn : opt); if (!f) continue;
       const rank = fitRank(f) - (swap ? 20 : 0);
       if (!best || rank > best.rank) best = { r, g, f, ft: swap ? 'swap' : ft, swap, rank };
     }
     if (!best) {
       why.small++;
       // fits a rig but under the Min fill setting: count it, so the list can say what's hidden
-      if (o.minFill > 0 && rigs.some(({ g }) => fitFor(c, g, { ...opt, minFill: 0 })?.kind === 'fits')) why.tiny++;
+      if ((TYPE_GROUP[c.t] === 'pn' ? o.minFillPn ?? 3 : o.minFill) > 0 && rigs.some(({ g }) => fitFor(c, g, { ...opt, minFill: 0 })?.kind === 'fits')) why.tiny++;
       continue;
     }
     // broadband-filtered rigs are hurt by moonlight on every target; narrowband rigs only matter for broadband targets
@@ -1726,7 +1727,7 @@ function renderTonight() {
     : `${darkHours.toFixed(1)} h of darkness · Moon ${Math.round(illum * 100)}% lit, up ${moonUpHours.toFixed(1)} h of it`
       + (o.avoidMoon && illum > 0.25 ? ' · galaxies, dark nebulae &amp; clusters only count moon-free hours' : '')
       + (state.sky?.bortle > 5 ? ` · <b>Bortle ${state.sky.bortle} sky</b>: emission nebulae are your best bet` : '')
-      + (why.tiny ? ` · <span title="They fit the frame but cover less than ${o.minFill}% of it">smaller objects that fit are hidden by <b>Min fill ${o.minFill}%</b> — lower it to see them</span>` : '')
+      + (why.tiny ? ` · <span title="They fit the frame but cover less than ${o.minFill}% of it">smaller objects that fit are hidden by the <b>Min fill</b> setting — lower it to see them</span>` : '')
       + (extState === 'loading' ? ' · loading LDN/LBN/SNR catalogs…' : extState === 'failed' ? ' · LDN/LBN/SNR catalogs could not be loaded (offline?)' : '');
   if (!items.length) {
     const reasons = [why.small ? `${why.small} too small (under ${o.minFill}% of the frame) or too big (over ${o.maxPanels} panels)` : '',
@@ -1736,7 +1737,7 @@ function renderTonight() {
       Try lowering the minimum fill or altitude, allowing more mosaic panels${o.avoidMoon && illum > 0.25 ? ', unticking Avoid Moon' : ''}, or adding a type.</div>`;
     $('#tnPick').innerHTML = '<option>No matching targets</option>'; $('#tnCount').textContent = '';
     const gl = Object.fromEntries(GROUPS);
-    $('#tnFilterSum').textContent = `Filters: ${o.types.map((g) => gl[g]).join(', ') || 'no types'} · ≥${o.minAlt}° · fill ≥${o.minFill}% · ≤${o.maxPanels} panels`;
+    $('#tnFilterSum').textContent = `Filters: ${o.types.map((g) => gl[g]).join(', ') || 'no types'} · ≥${o.minAlt}° · fill ≥${o.minFill}%${o.types.includes('pn') ? ` (planetaries ≥${o.minFillPn ?? 3}%)` : ''} · ≤${o.maxPanels} panels`;
     return;
   }
   const fitText = (f) => (f.kind === 'fits' ? `fits, ${Math.round(f.fill * 100)}% of frame` : `${f.nc}×${f.nr} mosaic`);
@@ -1763,7 +1764,7 @@ function renderTonight() {
     </div>`;
   $('#tnCount').textContent = `${items.length} target${items.length === 1 ? '' : 's'}`;
   const gl = Object.fromEntries(GROUPS);
-  $('#tnFilterSum').textContent = `Filters: ${o.types.map((g) => gl[g]).join(', ') || 'no types'} · ≥${o.minAlt}° · fill ≥${o.minFill}% · ≤${o.maxPanels} panel${o.maxPanels == 1 ? '' : 's'}${o.avoidMoon ? ' · avoid Moon' : ''}`;
+  $('#tnFilterSum').textContent = `Filters: ${o.types.map((g) => gl[g]).join(', ') || 'no types'} · ≥${o.minAlt}° · fill ≥${o.minFill}%${o.types.includes('pn') ? ` (planetaries ≥${o.minFillPn ?? 3}%)` : ''} · ≤${o.maxPanels} panel${o.maxPanels == 1 ? '' : 's'}${o.avoidMoon ? ' · avoid Moon' : ''}`;
   markLoaded();
 }
 function swapAdvice(g) {          // the broadband filter to use instead, from the user's own filters when possible
@@ -1799,7 +1800,7 @@ $('#tnTypes').addEventListener('click', (e) => {
   const set = new Set(state.tn.types); set.has(g) ? set.delete(g) : set.add(g); state.tn.types = [...set];
   e.target.classList.toggle('on'); saveStore(); tnSel = 0; renderTonight();
 });
-for (const [id, k] of [['#tnMinAlt', 'minAlt'], ['#tnMinFill', 'minFill'], ['#tnMaxPanels', 'maxPanels']])
+for (const [id, k] of [['#tnMinAlt', 'minAlt'], ['#tnMinFill', 'minFill'], ['#tnMinFillPn', 'minFillPn'], ['#tnMaxPanels', 'maxPanels']])
   $(id).addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (isFinite(v)) { state.tn[k] = v; saveStore(); scheduleTonight(); } });
 $('#tnMoon').addEventListener('change', (e) => { state.tn.avoidMoon = e.target.checked; saveStore(); renderTonight(); });
 $('#tnSort').addEventListener('change', (e) => { state.tn.sort = e.target.value; tnSel = 0; saveStore(); renderTonight(); });
