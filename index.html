@@ -72,6 +72,9 @@
   .gobox:empty { display: none; }
   .gobox .go { flex: none; font-weight: 800; font-size: 15px; letter-spacing: .04em; padding: 6px 10px; border-radius: 8px; color: #08101f; min-width: 64px; text-align: center; }
   .gobox .go.g { background: #3fb950; } .gobox .go.w { background: #e3a63b; } .gobox .go.b { background: #e5534b; color: #fff; }
+  .herelist { margin: 6px 0 0; padding: 0; list-style: none; max-height: 320px; overflow: auto; }
+  .herelist li { padding: 4px 0; border-top: 1px solid var(--line); cursor: pointer; }
+  .herelist li:hover b { color: var(--accent); }
   .optplot { width: 100%; height: auto; border-radius: 8px; margin: 8px 0 4px; border: 1px solid var(--line); }
   .satbox { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
   .satbox .row { gap: 6px; align-items: center; } .satbox select { max-width: 200px; }
@@ -432,8 +435,10 @@
       <div class="row" style="margin-top:6px">
         <button class="icon" id="shareBtn" title="Copy a link that opens this target with these frames">⤴ Share framing</button>
         <button class="icon" id="coordBtn" title="Centre, rotation and mosaic panel coordinates to type or paste into your capture software">◎ Coordinates</button>
+        <button class="icon" id="hereBtn" title="List the catalogued objects inside the frames at the current view centre">◉ What's in the frame?</button>
         <span class="note" id="shareMsg"></span>
       </div>
+      <div id="hereOut" class="note" hidden></div>
     </section>
 
     <section data-tab="frame" class="card" id="cmpCard" hidden>
@@ -3927,7 +3932,61 @@ function coordRows() {
   return { name: t ? (t.comet ? t.name : normId(t.mainId || t.name)) : 'Field', ra0, dec0, rigs: out };
 }
 const raHms = (ra) => { const v = ((ra % 360) + 360) % 360 / 15, h = Math.floor(v), m = Math.floor((v - h) * 60), s = ((v - h) * 60 - m) * 60; return `${String(h).padStart(2, '0')}h ${String(m).padStart(2, '0')}m ${s.toFixed(1).padStart(4, '0')}s`; };
-const decDms = (dec) => { const sg = dec < 0 ? '-' : '+', v = Math.abs(dec), d = Math.floor(v), m = Math.floor((v - d) * 60), s = Math.round(((v - d) * 60 - m) * 60); return `${sg}${String(d).padStart(2, '0')}° ${String(m).padStart(2, '0')}′ ${String(s).padStart(2, '0')}″`; };
+const decDms = (dec) => { const sg = dec < 0 ? '-' : '+', t = Math.round(Math.abs(dec) * 3600), d = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60; return `${sg}${String(d).padStart(2, '0')}° ${String(m).padStart(2, '0')}′ ${String(s).padStart(2, '0')}″`; };
+/* ---------- What's in the frame: built-in catalogue (+ LDN/LBN/SNR) and a SIMBAD cone search ---------- */
+const SIMBAD_EXT = ['SNR', 'HII', 'PN', 'bub', 'ISM', 'Cld', 'DNe', 'RNe', 'EmO', 'GNe', 'MoC', 'OpC', 'GlC', 'Cl*', 'As*', 'G', 'GiG', 'GiP', 'IG', 'PaG', 'GrG', 'CGG', 'ClG', 'SFR'];
+const SIMBAD_TYPE = { SNR: 'supernova remnant', HII: 'HII region', PN: 'planetary nebula', bub: 'bubble', ISM: 'interstellar matter', Cld: 'cloud', DNe: 'dark nebula', RNe: 'reflection nebula',
+  EmO: 'emission object', GNe: 'nebula', MoC: 'molecular cloud', OpC: 'open cluster', GlC: 'globular cluster', 'Cl*': 'star cluster', 'As*': 'association', G: 'galaxy', GiG: 'galaxy in group',
+  GiP: 'galaxy in pair', IG: 'interacting galaxies', PaG: 'galaxy pair', GrG: 'galaxy group', CGG: 'compact galaxy group', ClG: 'galaxy cluster', SFR: 'star-forming region' };
+async function whatsHere() {
+  const out = $('#hereOut'); out.hidden = false;
+  const rigs = state.rigs.filter((r) => r.on).map((r) => rigGeom(r)).filter(Boolean);
+  if (!rigs.length) { out.textContent = 'Turn on a rig first: the search covers its frame.'; return; }
+  const [ra0, dec0] = state.center;
+  const R = Math.max(...rigs.map((g) => Math.hypot(g.mw, g.mh) / 2));           // half-diagonal of the largest frame (deg)
+  // built-in catalogue: anything whose extent overlaps the frame circle
+  const local = CAT.map((c) => ({ c, d: angSep(ra0, dec0, c.ra, c.dec) })).filter(({ c, d }) => d <= R + (c.maj || 0) / 120 * 0.8)
+    .sort((a, b) => (b.c.maj || 0) - (a.c.maj || 0)).slice(0, 30);
+  const row = (name, sub, d, key) => `<li data-here="${esc(key)}"><b>${esc(name)}</b> <span class="note">${sub} · ${d < R ? `${(d * 60).toFixed(0)}′ from centre` : 'reaches into the frame'}</span></li>`;
+  const localHtml = local.map(({ c, d }) => row(`${c.id}${c.name ? ' · ' + c.name : ''}`, `${esc(TYPE_NAMES[c.t] || c.t)} · ${c.maj ? (c.maj >= 60 ? (c.maj / 60).toFixed(1) + '°' : Math.round(c.maj) + '′') : '?'}`, d, 'cat:' + c.i)).join('');
+  out.innerHTML = `<b style="color:var(--text)">In the frame</b> <span class="note">(${fmtAngle(R * 2)} circle around ${raHms(ra0)} ${decDms(dec0)})</span>`
+    + (local.length ? `<ul class="herelist">${localHtml}</ul>` : '<div>Nothing from the built-in catalogue here.</div>')
+    + (extState === 'failed' ? '<div class="note">The dark/bright nebula and supernova-remnant lists could not be loaded, so faint large objects may be missing.</div>' : '')
+    + '<div id="hereSim" class="note" style="margin-top:6px">Asking SIMBAD for more…</div>';
+  // SIMBAD: extended objects with centres in a wider circle; big ones (with a size) count if they reach into the frame.
+  // Unsized SIMBAD entries are mostly survey blobs, so only SNRs, planetaries and bubbles are kept without a size,
+  // and an object needs a name imagers use (NGC, Sh2, LBN, HB …) unless it is a remnant or planetary.
+  const types = ['SNR', 'HII', 'PN', 'bub', 'DNe', 'RNe', 'EmO', 'GNe', 'OpC', 'GlC', 'Cl*', 'G', 'GiG', 'GiP', 'IG', 'PaG', 'SFR'];
+  const adql = `SELECT TOP 150 oid, main_id, ra, dec, otype, galdim_majaxis FROM basic WHERE CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', ${ra0.toFixed(4)}, ${dec0.toFixed(4)}, ${Math.min(10, R + 1.5).toFixed(3)})) = 1 AND otype IN (${types.map((t) => `'${t}'`).join(',')}) AND (galdim_majaxis IS NOT NULL OR otype IN ('SNR', 'PN', 'bub')) ORDER BY galdim_majaxis DESC`;
+  const NICE = ['NAME %', 'M %', 'NGC %', 'IC %', 'SH %', 'LBN %', 'LDN %', 'VDB %', 'Ced %', 'Barnard %', 'B %', 'PN A66 %', 'HBH %', 'VRO %', 'Simeis %', 'Gum %', 'RCW %', 'Cr %', 'Mel %', 'Stock %', 'Berkeley %', 'Trumpler %', 'King %', 'UGC %', 'PGC %'];
+  const rank = (id) => { const k = NICE.findIndex((p) => id.toUpperCase().startsWith(p.slice(0, -2).toUpperCase() + ' ')); return k < 0 ? 99 : k; };
+  const pretty = (id) => id.replace(/^NAME /, '').replace(/^SH\s+2-/, 'Sh2-').replace(/^HBH\s+/, 'HB ').replace(/^PN A66\s+/, 'Abell ').replace(/\s+/g, ' ').trim();
+  let base = [], alias = [];
+  try {
+    base = (await tap(adql, 20000)).map((r) => ({ oid: r.oid, id: String(r.main_id).trim(), ra: r.ra, dec: r.dec, t: String(r.otype || '').trim(), maj: r.galdim_majaxis, d: angSep(ra0, dec0, r.ra, r.dec) }))
+      .filter((x) => x.d <= R + (x.maj ? x.maj / 120 * 0.8 : 0));
+    if (base.length) alias = await tap(`SELECT oidref, id FROM ident WHERE oidref IN (${base.map((x) => x.oid).join(',')}) AND (${NICE.map((p) => `id LIKE '${p}'`).join(' OR ')})`, 20000);
+  } catch { const el = $('#hereSim'); if (el) el.textContent = 'SIMBAD did not answer; only the built-in catalogue is shown.'; return; }
+  const names = new Map();
+  for (const a of alias) { const l = names.get(a.oidref) || []; l.push(String(a.id).trim()); names.set(a.oidref, l); }
+  const seen = new Set(local.flatMap(({ c }) => [c.id, ...(c.alt || '').split(' · ')].map((n) => normId(n).toLowerCase())));
+  const sim = base.map((x) => {
+    const al = (names.get(x.oid) || []).sort((a, b) => rank(a) - rank(b));
+    const snr = x.t === 'SNR' && (() => { for (const n of [x.id, ...al]) { const m = n.match(/G(\d+\.\d)([+-])0*(\d+\.\d)/); if (m && OPTICAL_SNR[`${+m[1]}${m[2]}${+m[3]}`]) return OPTICAL_SNR[`${+m[1]}${m[2]}${+m[3]}`]; } return null; })();
+    const nice = al.length ? pretty(al[0]) : null;
+    return { ...x, label: snr ? `${snr} (${x.id})` : nice ? (normId(x.id) !== nice ? `${nice} (${normId(x.id)})` : nice) : normId(x.id), named: !!(snr || nice), all: [x.id, ...al] };
+  }).filter((x) => (x.named || ['SNR', 'PN'].includes(x.t)) && !x.all.some((n) => seen.has(normId(n).toLowerCase()) || seen.has(pretty(n).toLowerCase())))
+    .sort((a, b) => (b.maj || 30) - (a.maj || 30)).slice(0, 30);
+  const el = $('#hereSim'); if (!el) return;
+  el.innerHTML = sim.length ? `<b style="color:var(--text)">Also in SIMBAD</b><ul class="herelist">${sim.map((x) => row(x.label, `${esc(SIMBAD_TYPE[x.t] || x.t)}${x.maj ? ` · ${x.maj >= 60 ? (x.maj / 60).toFixed(1) + '°' : Math.round(x.maj) + '′'}` : ''}`, x.d, 'q:' + x.id)).join('')}</ul>`
+    : 'Nothing else in SIMBAD for this area.';
+  track('whats-here');
+}
+$('#hereBtn').addEventListener('click', whatsHere);
+$('#hereOut').addEventListener('click', (e) => {
+  const k = e.target.closest('[data-here]')?.dataset.here; if (!k) return;
+  if (k.startsWith('cat:')) showCatalogTarget(CAT[+k.slice(4)], false); else { $('#q').value = k.slice(2); search(k.slice(2)); }
+});
 $('#coordBtn').addEventListener('click', () => {
   const d = coordRows();
   if (!d.rigs.length) { $('#shareMsg').textContent = 'Turn on at least one rig first.'; return; }

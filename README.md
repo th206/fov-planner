@@ -60,6 +60,10 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Sky tab → **Horizon**: enter how high obstructions reach in eight directions, or import an *azimuth altitude* skyline file (N.I.N.A. `.hrz`, Stellarium). Saved per observing site (within 5 km), so a flat site stays flat
 - The altitude chart shades the obstruction in the target's direction through the night and reports hours clear of it (and hours lost). Tonight's picks, comets and the forecast verdict count only clear time; the *On target* row shows `tree` when it is hidden
 
+## What's in the frame?
+
+- Frame tab → *What's in the frame?* lists everything catalogued inside the frames at the current view centre: the built-in catalogue (with LDN/LBN/SNR when loaded) and a SIMBAD search for nebulae, remnants, planetaries, clusters and galaxies, shown by the names imagers use (NGC, Sh2, LBN, HB …). Tap one to load it
+
 ## Filters
 
 - Add your filters under Equipment: type (narrowband Hα / OIII / SII or a full set, LRGB set, dual-band, light-pollution, UV/IR cut), size (1.25″ to 50 mm) and optional bandwidth
