@@ -75,6 +75,10 @@
   .herelist { margin: 6px 0 0; padding: 0; list-style: none; max-height: 320px; overflow: auto; }
   .herelist li { padding: 4px 0; border-top: 1px solid var(--line); cursor: pointer; }
   .herelist li:hover b { color: var(--accent); }
+  .photonav { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+  .photonav button { background: none; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 1px 7px; cursor: pointer; font-size: 12px; }
+  .photonav button.on { border-color: var(--accent); color: var(--accent); }
+  .photonav #phLbl { max-width: 190px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .optplot { width: 100%; height: auto; border-radius: 8px; margin: 8px 0 4px; border: 1px solid var(--line); }
   .satbox { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
   .satbox .row { gap: 6px; align-items: center; } .satbox select { max-width: 200px; }
@@ -682,6 +686,7 @@
       <span>✦ Faint detail</span>
       <input type="range" id="boost" min="0" max="100" step="1" aria-label="Faint detail boost">
       <label class="dustlbl" title="Show or hide your own photos (Gallery and My images) on the sky"><input type="checkbox" id="photosOn"> Photos</label>
+      <span id="photoNav" class="photonav" hidden><button type="button" id="phPrev" title="Previous photo of this field">◀</button><span id="phLbl"></span><button type="button" id="phNext" title="Next photo of this field">▶</button><button type="button" id="phAll" title="Show all photos of this field on top of each other">all</button></span>
       <label class="dustlbl" title="Glow of interstellar dust (IRAS 100 µm). Dark nebulae are dust clouds: they show up bright here, so you can see their shape and extent. Turns on by itself for dark nebulae."><input type="checkbox" id="dustOn"> Dust</label>
     </div>
     <div id="legend"></div>
@@ -1324,9 +1329,26 @@ function inView(rec) {
   const [ra, dec] = aladin.getRaDec(); const fov = aladin.getFov();
   return angSep(ra, dec, rec.ra, rec.dec) < rec.radius + Math.hypot(fov[0], fov[1]) / 2;
 }
+// Several photos of the same field (e.g. M74 from two rigs): show one at a time, stepped with ◀ ▶ in the map toolbar
+const photoPick = new Map(); let photoAll = false, photoStack = [];
 function refreshImageLayers(force) {
   if (!aladin) return;
-  const recs = state.galOverlay ? [...imgCache, ...galleryRecs()] : [];
+  const kept = new Set(imgCache.map((r) => r.galId).filter(Boolean));   // a gallery photo saved to this browser is shown once (the local copy)
+  const all = state.galOverlay ? [...imgCache, ...galleryRecs().filter((g) => !kept.has(g.id.replace(/^gal-/, '').replace(/-f$/, '')))] : [];
+  const [vra, vdec] = aladin.getRaDec();
+  photoStack = all.filter((r) => r.on && inView(r) && angSep(vra, vdec, r.ra, r.dec) < r.radius).sort((a, b) => b.radius - a.radius);
+  const key = photoStack.map((r) => r.id).sort().join('|');
+  const pick = photoStack.length > 1 ? (photoPick.get(key) ?? 0) % photoStack.length : 0;
+  const hide = new Set(photoStack.length > 1 && !photoAll ? photoStack.filter((_, k) => k !== pick).map((r) => r.id) : []);
+  const recs = all.map((r) => (hide.has(r.id) ? { ...r, on: false } : r));
+  const nav = $('#photoNav');
+  if (nav) {
+    nav.hidden = photoStack.length < 2;
+    if (photoStack.length > 1) { const r = photoStack[pick];
+      $('#phLbl').textContent = photoAll ? `all ${photoStack.length} photos` : `${pick + 1}/${photoStack.length} ${r.name}${r.sub ? ' · ' + r.sub : ''}`;
+      $('#phLbl').title = photoStack.map((x, k) => `${k + 1}. ${x.name}${x.sub ? ' · ' + x.sub : ''} (${fmtAngle(x.radius * 2 / Math.SQRT2)})`).join('\n');
+      $('#phAll').classList.toggle('on', photoAll); }
+  }
   for (const [id, cur] of imgShown) if (!recs.some((r) => r.id === id)) { aladin.removeImageLayer(cur.layer); imgShown.delete(id); }
   for (const rec of recs) {
     const want = rec.on && inView(rec), cur = imgShown.get(rec.id);
@@ -3596,7 +3618,7 @@ const galKey = () => { try { return localStorage.getItem('mrp.gkey') || ''; } ca
 const galWcs = (it) => { const w = it.wcs; const det = w.cd[0] * w.cd[3] - w.cd[1] * w.cd[2]; return (det > 0) !== !!it.flip ? flipWcs(w) : w; };
 function galleryRecs() {
   if (!Array.isArray(galItems) || !state.galOverlay) return [];
-  return galItems.filter((it) => it.wcs && it.wcs.w).map((it) => ({ id: 'gal-' + it.id + (it.flip ? '-f' : ''), name: it.title || it.target || 'Gallery image',
+  return galItems.filter((it) => it.wcs && it.wcs.w).map((it) => ({ id: 'gal-' + it.id + (it.flip ? '-f' : ''), name: it.title || it.target || 'Gallery image', sub: it.telescope || '',
     url: `/g/${it.id}/image.jpg`, fmt: 'jpeg', wcs: galWcs(it), flip: false, on: true, opacity: 0.85, ...imgFootprint(galWcs(it)) }));
 }
 async function galFetch(path = '', opts = {}) {
@@ -3700,6 +3722,13 @@ function setPhotos(on) {
   refreshImageLayers(true);
 }
 $('#galOverlay').addEventListener('change', (e) => setPhotos(e.target.checked));
+const photoStep = (d) => { if (photoStack.length < 2) return; photoAll = false; const key = photoStack.map((r) => r.id).sort().join('|');
+  photoPick.set(key, ((photoPick.get(key) ?? 0) + d + photoStack.length) % photoStack.length); refreshImageLayers(true); };
+$('#phPrev').addEventListener('click', () => photoStep(-1));
+$('#phNext').addEventListener('click', () => photoStep(1));
+$('#phAll').addEventListener('click', () => { photoAll = !photoAll; refreshImageLayers(true); });
+document.addEventListener('keydown', (e) => { if (photoStack.length < 2 || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName || '')) return;
+  if (e.key === '[') photoStep(-1); else if (e.key === ']') photoStep(1); });
 $('#photosOn').addEventListener('change', (e) => { setPhotos(e.target.checked); track('photos/' + (e.target.checked ? 'on' : 'off')); });
 $('#photosOn').checked = state.galOverlay;
 $('#galOwner').addEventListener('click', async (e) => {
