@@ -67,6 +67,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 ## What's in the frame?
 
 - Frame tab → *What's in the frame?* lists everything catalogued inside the frames at the current view centre: the built-in catalogue (with LDN/LBN/SNR when loaded) and a SIMBAD search for nebulae, remnants, planetaries, clusters and galaxies, shown by the names imagers use (NGC, Sh2, LBN, HB …). Tap one to load it
+- It also shows when the field is up: usable hours tonight (dark, above your minimum altitude, clear of your horizon) with times, the best months, and a 12-month strip of usable hours mid-month; each listed object gets its own hours for tonight
 
 ## Filters
 

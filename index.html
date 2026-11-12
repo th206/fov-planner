@@ -79,6 +79,10 @@
   .photonav button { background: none; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 1px 7px; cursor: pointer; font-size: 12px; }
   .photonav button.on { border-color: var(--accent); color: var(--accent); }
   .photonav #phLbl { max-width: 190px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seasonstrip { display: flex; gap: 2px; margin-top: 5px; }
+  .seasonstrip span { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; font-size: 10px; padding: 2px 0; border-radius: 4px; overflow: hidden; color: var(--text); isolation: isolate; background: rgba(255,255,255,.04); }
+  .seasonstrip span i { position: absolute; inset: 0; background: #3fb950; opacity: calc(var(--a) * 0.75); z-index: -1; }
+  .seasonstrip span b { font-size: 10px; }
   .optplot { width: 100%; height: auto; border-radius: 8px; margin: 8px 0 4px; border: 1px solid var(--line); }
   .satbox { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
   .satbox .row { gap: 6px; align-items: center; } .satbox select { max-width: 200px; }
@@ -3967,6 +3971,26 @@ const SIMBAD_EXT = ['SNR', 'HII', 'PN', 'bub', 'ISM', 'Cld', 'DNe', 'RNe', 'EmO'
 const SIMBAD_TYPE = { SNR: 'supernova remnant', HII: 'HII region', PN: 'planetary nebula', bub: 'bubble', ISM: 'interstellar matter', Cld: 'cloud', DNe: 'dark nebula', RNe: 'reflection nebula',
   EmO: 'emission object', GNe: 'nebula', MoC: 'molecular cloud', OpC: 'open cluster', GlC: 'globular cluster', 'Cl*': 'star cluster', 'As*': 'association', G: 'galaxy', GiG: 'galaxy in group',
   GiP: 'galaxy in pair', IG: 'interacting galaxies', PaG: 'galaxy pair', GrG: 'galaxy group', CGG: 'compact galaxy group', ClG: 'galaxy cluster', SFR: 'star-forming region' };
+// usable hours on one night: Sun below −18°, object above the minimum altitude and clear of the local horizon
+function usableHours(ra, dec, t0, step = 10 * 60e3) {
+  const { lat, lon } = state.site, minA = state.tn.minAlt || 30, hz = siteHorizon();
+  let h = 0, first = null, last = null;
+  for (let ms = t0; ms < t0 + 16 * 3600e3; ms += step) {
+    const [sr, sd] = sunRaDec(ms); if (altAz(sr, sd, ms, lat, lon) >= -18) continue;
+    if (!skyClear(ra, dec, ms, minA, hz).ok) continue;
+    h += step / 3600e3; first ??= ms; last = ms + step;
+  }
+  return { h, first, last };
+}
+// usable hours on the 15th of each of the next 12 months, starting with the current one
+function seasonStrip(ra, dec) {
+  const { tz } = state.site, now = new Date(Date.now() + tz * 3600e3);
+  return Array.from({ length: 12 }, (_, k) => {
+    const y = now.getUTCFullYear(), m = now.getUTCMonth() + k, d = new Date(Date.UTC(y, m, 15));
+    const t0 = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 15, 16) - tz * 3600e3;
+    return { m: d.toLocaleString('en', { month: 'short', timeZone: 'UTC' }), h: usableHours(ra, dec, t0, 20 * 60e3).h };
+  });
+}
 async function whatsHere() {
   const out = $('#hereOut'); out.hidden = false;
   const rigs = state.rigs.filter((r) => r.on).map((r) => rigGeom(r)).filter(Boolean);
@@ -3976,9 +4000,21 @@ async function whatsHere() {
   // built-in catalogue: anything whose extent overlaps the frame circle
   const local = CAT.map((c) => ({ c, d: angSep(ra0, dec0, c.ra, c.dec) })).filter(({ c, d }) => d <= R + (c.maj || 0) / 120 * 0.8)
     .sort((a, b) => (b.c.maj || 0) - (a.c.maj || 0)).slice(0, 30);
-  const row = (name, sub, d, key) => `<li data-here="${esc(key)}"><b>${esc(name)}</b> <span class="note">${sub} · ${d < R ? `${(d * 60).toFixed(0)}′ from centre` : 'reaches into the frame'}</span></li>`;
-  const localHtml = local.map(({ c, d }) => row(`${c.id}${c.name ? ' · ' + c.name : ''}`, `${esc(TYPE_NAMES[c.t] || c.t)} · ${c.maj ? (c.maj >= 60 ? (c.maj / 60).toFixed(1) + '°' : Math.round(c.maj) + '′') : '?'}`, d, 'cat:' + c.i)).join('');
+  const { t0 } = nightWindow();
+  const tonightTag = (ra, dec) => { const u = usableHours(ra, dec, t0); return u.h >= 1 ? ` · <span class="tag good">${u.h.toFixed(1)} h tonight</span>` : u.h > 0 ? ` · <span class="tag warn">${u.h.toFixed(1)} h tonight</span>` : ' · <span class="tag bad">not up tonight</span>'; };
+  const row = (name, sub, d, key, ra, dec) => `<li data-here="${esc(key)}"><b>${esc(name)}</b> <span class="note">${sub} · ${d < R ? `${(d * 60).toFixed(0)}′ from centre` : 'reaches into the frame'}${ra != null ? tonightTag(ra, dec) : ''}</span></li>`;
+  // the field as a whole: tonight, and a month-by-month strip (all objects in one frame share nearly the same season)
+  const u = usableHours(ra0, dec0, t0), S = seasonStrip(ra0, dec0), maxH = Math.max(...S.map((x) => x.h), 0.1);
+  // longest run of good months, wrapping round the year (e.g. Sep–Jan)
+  const ok = S.map((x) => x.h >= Math.max(2, maxH * 0.6)); let best = [0, 0];
+  for (let i = 0; i < 12; i++) { if (!ok[i] || ok[(i + 11) % 12] && ok.some((v) => !v)) continue; let n = 0; while (n < 12 && ok[(i + n) % 12]) n++; if (n > best[1]) best = [i, n]; }
+  const good = best[1] === 12 ? ['all year'] : best[1] ? [S[best[0]].m, S[(best[0] + best[1] - 1) % 12].m] : [];
+  const fieldHtml = `<div style="margin:6px 0"><b style="color:var(--text)">This field</b> · ${u.h >= 0.5 ? `<span class="tag ${u.h >= 2 ? 'good' : 'warn'}">${u.h.toFixed(1)} h tonight</span> ${hhmms(u.first)}–${hhmms(u.last)}` : '<span class="tag bad">not up in darkness tonight</span>'}
+      · best in <b>${good.length === 1 ? good[0] : good.length ? (good[0] === good[1] ? good[0] : `${good[0]}–${good[1]}`) : bestMonth(ra0)}</b>${90 - Math.abs(state.site.lat - dec0) < (state.tn.minAlt || 30) ? ` <span class="tag bad">never above ${state.tn.minAlt || 30}° from here</span>` : ''}
+    <div class="seasonstrip" title="Hours of darkness with the field above ${state.tn.minAlt || 30}° (and clear of your horizon), mid-month">${S.map((x) => `<span style="--a:${(x.h / maxH).toFixed(2)}" title="${x.m}: ${x.h.toFixed(1)} h"><i></i>${x.m[0]}<b>${x.h >= 0.5 ? Math.round(x.h) : '–'}</b></span>`).join('')}</div></div>`;
+  const localHtml = local.map(({ c, d }) => row(`${c.id}${c.name ? ' · ' + c.name : ''}`, `${esc(TYPE_NAMES[c.t] || c.t)} · ${c.maj ? (c.maj >= 60 ? (c.maj / 60).toFixed(1) + '°' : Math.round(c.maj) + '′') : '?'}`, d, 'cat:' + c.i, c.ra, c.dec)).join('');
   out.innerHTML = `<b style="color:var(--text)">In the frame</b> <span class="note">(${fmtAngle(R * 2)} circle around ${raHms(ra0)} ${decDms(dec0)})</span>`
+    + fieldHtml
     + (local.length ? `<ul class="herelist">${localHtml}</ul>` : '<div>Nothing from the built-in catalogue here.</div>')
     + (extState === 'failed' ? '<div class="note">The dark/bright nebula and supernova-remnant lists could not be loaded, so faint large objects may be missing.</div>' : '')
     + '<div id="hereSim" class="note" style="margin-top:6px">Asking SIMBAD for more…</div>';
@@ -4007,7 +4043,7 @@ async function whatsHere() {
   }).filter((x) => (x.named || ['SNR', 'PN'].includes(x.t)) && !x.all.some((n) => seen.has(normId(n).toLowerCase()) || seen.has(pretty(n).toLowerCase())))
     .sort((a, b) => (b.maj || 30) - (a.maj || 30)).slice(0, 30);
   const el = $('#hereSim'); if (!el) return;
-  el.innerHTML = sim.length ? `<b style="color:var(--text)">Also in SIMBAD</b><ul class="herelist">${sim.map((x) => row(x.label, `${esc(SIMBAD_TYPE[x.t] || x.t)}${x.maj ? ` · ${x.maj >= 60 ? (x.maj / 60).toFixed(1) + '°' : Math.round(x.maj) + '′'}` : ''}`, x.d, 'q:' + x.id)).join('')}</ul>`
+  el.innerHTML = sim.length ? `<b style="color:var(--text)">Also in SIMBAD</b><ul class="herelist">${sim.map((x) => row(x.label, `${esc(SIMBAD_TYPE[x.t] || x.t)}${x.maj ? ` · ${x.maj >= 60 ? (x.maj / 60).toFixed(1) + '°' : Math.round(x.maj) + '′'}` : ''}`, x.d, 'q:' + x.id, x.ra, x.dec)).join('')}</ul>`
     : 'Nothing else in SIMBAD for this area.';
   track('whats-here');
 }
