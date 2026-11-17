@@ -59,16 +59,34 @@ async function hipsTile(req, p) {
   return new Response('No survey mirror had this tile', { status: 404, headers: { 'access-control-allow-origin': '*' } });
 }
 
-// Settings sync between a person's devices. The browser encrypts the settings with a key made from the person's sync
-// code (AES-GCM, see index.html) and addresses them by a hash of that code, so this server only ever stores an opaque
-// blob it cannot read. Anyone who knows the code can read and replace that blob; nobody else can find it.
+// Settings sync between a person's devices, under a name the person picks plus a 6-digit PIN.
+// The browser derives two things from name + PIN: a proof (sent here) and an encryption key (never sent). The settings
+// arrive already encrypted, so this server stores a blob it cannot read. A short PIN is only safe because guessing is
+// limited: after 5 wrong PINs a name is locked for 15 minutes, then for longer each time.
 const SYNC_MAX = 1024 * 1024;
+const hex = (buf) => Array.from(new Uint8Array(buf), (x) => x.toString(16).padStart(2, '0')).join('');
 async function syncApi(req, env, p) {
-  const id = p.slice('/api/sync/'.length);
+  const id = p.slice('/api/sync/'.length), H = { 'cache-control': 'no-store' };
   if (!/^[0-9a-f]{64}$/.test(id)) fail('Bad sync id.', 404);
-  const key = `sync/${id}.json`, H = { 'cache-control': 'no-store' };
+  const proof = req.headers.get('x-sync-proof') || '';
+  if (!/^[0-9a-f]{64}$/.test(proof)) fail('Missing PIN proof.', 401);
+  const dataKey = `sync/${id}.json`, authKey = `sync/${id}.auth.json`;
+  const ao = await env.GALLERY.get(authKey), auth = ao ? await ao.json() : null;
+  const now = Date.now(), want = hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('fovplanner:' + proof)));
+  const saveAuth = (a) => env.GALLERY.put(authKey, JSON.stringify(a), { httpMetadata: { contentType: 'application/json' } });
+  if (auth) {
+    if (auth.lockUntil > now) return json({ error: 'locked', until: auth.lockUntil }, 429, H);
+    if (auth.proof !== want) {
+      auth.fails = (auth.fails || 0) + 1;
+      if (auth.fails % 5 === 0) auth.lockUntil = now + 15 * 60000 * 2 ** Math.min(6, auth.fails / 5 - 1);   // 15 min, 30, 60 … up to 16 h
+      await saveAuth(auth);
+      if (auth.lockUntil > now) return json({ error: 'locked', until: auth.lockUntil }, 429, H);
+      return json({ error: 'wrong', left: 5 - (auth.fails % 5) }, 403, H);
+    }
+    if (auth.fails) { auth.fails = 0; auth.lockUntil = 0; await saveAuth(auth); }
+  }
   if (req.method === 'GET') {
-    const o = await env.GALLERY.get(key);
+    const o = auth && await env.GALLERY.get(dataKey);
     if (!o) return json({ error: 'none' }, 404, H);
     return new Response(o.body, { headers: { ...JSON_H, ...H } });
   }
@@ -76,14 +94,15 @@ async function syncApi(req, env, p) {
     const body = await req.text();
     if (body.length > SYNC_MAX) fail('Settings too large to sync.', 413);
     let d; try { d = JSON.parse(body); } catch { fail('Bad sync data.'); }
-    if (d?.v !== 1 || typeof d.iv !== 'string' || typeof d.ct !== 'string' || !(d.ts > 0)) fail('Bad sync data.');
+    if (d?.v !== 2 || typeof d.iv !== 'string' || typeof d.ct !== 'string' || !(d.ts > 0)) fail('Bad sync data.');
+    if (!auth) await saveAuth({ proof: want, created: now, fails: 0 });   // first save claims the name
     // never let an older copy overwrite a newer one (two devices saving at nearly the same time)
-    const cur = await env.GALLERY.head(key), curTs = +(cur?.customMetadata?.ts || 0);
+    const cur = await env.GALLERY.head(dataKey), curTs = +(cur?.customMetadata?.ts || 0);
     if (curTs > d.ts) return json({ ok: false, newer: curTs }, 409, H);
-    await env.GALLERY.put(key, body, { httpMetadata: { contentType: 'application/json' }, customMetadata: { ts: String(d.ts) } });
+    await env.GALLERY.put(dataKey, body, { httpMetadata: { contentType: 'application/json' }, customMetadata: { ts: String(d.ts) } });
     return json({ ok: true, ts: d.ts }, 200, H);
   }
-  if (req.method === 'DELETE') { await env.GALLERY.delete(key); return json({ ok: true }, 200, H); }
+  if (req.method === 'DELETE') { await env.GALLERY.delete([dataKey, authKey]); return json({ ok: true }, 200, H); }
   fail('Method not allowed.', 405);
 }
 
