@@ -4925,7 +4925,10 @@ function renderSync(prefillName) {
 async function syncConnect(name, pin) {
   const err = (t) => { const el = $('#syncErr'); if (el) el.textContent = t; };
   name = syncName(name);
-  if (!/^[a-z0-9._-]{3,30}$/.test(name)) return err('Sync name: 3–30 letters, numbers, dots, dashes or underscores.');
+  if (!/^[a-z0-9._-]{5,30}$/.test(name)) return err('Sync name: 5–30 letters, numbers, dots, dashes or underscores.');
+  // names many people would pick (including the example) would end up shared between strangers
+  if (/^(orion-?hunter|example|test(ing)?\d*|admin|user\d*|astro(nomy|photo|photography)?|telescope|fovplanner|planner|guest|demo|myname|name|sync|default|password)$/.test(name))
+    return err('That name is too common: choose something only you would use.');
   if (!/^\d{6}$/.test(pin)) return err('PIN: exactly 6 digits.');
   if (/^(\d)\1{5}$|^012345$|^123456$|^654321$/.test(pin)) return err('Choose a less obvious PIN.');
   err('Connecting…');
@@ -4935,7 +4938,11 @@ async function syncConnect(name, pin) {
     if (!r) {   // new name: claim it with this device's setup
       syncSetCfg({ ...c, edit: Date.now() }); syncReady = true; renderSync(); await syncNow(); track('sync/new'); return;
     }
-    if (!confirm(`Load the setup saved as “${name}” into this browser? It replaces the equipment, rigs and settings here.`)) { err(''); return; }
+    // show what is in it, so a person who landed on someone else's name can tell it isn't theirs
+    const v = (() => { try { return JSON.parse(r.data['mrp.v1'] || '{}'); } catch { return {}; } })();
+    const sc = (v.scopes || []).map((x) => x.name).slice(0, 3).join(', '), cm = (v.cams || []).map((x) => x.name).slice(0, 3).join(', ');
+    const when = new Date(r.ts).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    if (!confirm(`Load the setup saved as “${name}”?\n\nLast saved ${when}\nTelescopes: ${sc || '—'}${(v.scopes || []).length > 3 ? ' …' : ''}\nCameras: ${cm || '—'}${(v.cams || []).length > 3 ? ' …' : ''}\nRigs: ${(v.rigs || []).length} · wish list: ${(v.wish || []).length} · places: ${(v.places || []).length}\n\nIf this isn't yours, press Cancel and choose another name. Otherwise it replaces the equipment, rigs and settings in this browser.`)) { err(''); return; }
     syncSetCfg(c); track('sync/join');
     syncApply(r, `This device is now synced as “${name}”.`);
   } catch (e) {
