@@ -102,6 +102,8 @@
   .wnote { margin-top: 3px; font-size: 12px; color: var(--text); opacity: .85; white-space: pre-wrap; overflow-wrap: anywhere; }
   .wishnote { width: 100%; box-sizing: border-box; margin-top: 6px; font: inherit; font-size: 12.5px; resize: vertical; }
   #wishNoteT { margin: 4px 0 6px; }
+  #syncBody code { font-size: 14px; letter-spacing: .05em; color: var(--text); background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 5px; user-select: all; }
+  #syncBody .row { margin-top: 8px; }
   .optplot { width: 100%; height: auto; border-radius: 8px; margin: 8px 0 4px; border: 1px solid var(--line); }
   .satbox { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
   .satbox .row { gap: 6px; align-items: center; } .satbox select { max-width: 200px; }
@@ -355,6 +357,8 @@
       } catch (e) { clearTimeout(t); go(0); }
       return;
     }
+    var sl = location.hash.match(/^#sync=([A-Za-z0-9-]{16,64})$/);   // a "link this device" link: keep the code, clear the hash
+    if (sl) { sessionStorage.setItem('mrp.syncLink', sl[1]); history.replaceState(null, '', location.pathname + location.search); return; }
     var m = location.hash.match(/^#migrate=([^&]+)(?:&then=(.*))?$/);
     if (!m) return;
     var p = dec(m[1]), inc = p.d || {}, mine = localStorage.getItem('mrp.v1'), merged = false;
@@ -626,6 +630,11 @@
     </section>
 
 
+    <section data-tab="gear" class="card" id="syncCard">
+      <h2>Sync across devices <span class="note" id="syncState" style="text-transform:none;letter-spacing:0"></span></h2>
+      <div id="syncBody" class="note"></div>
+    </section>
+
     <section data-tab="gear" class="card" id="opticsCard">
       <h2>Optics check <span class="note" style="text-transform:none;letter-spacing:0">· tilt, spacing, tracking</span></h2>
       <div class="row"><label style="flex:1">Rig <select id="optRig" style="flex:1"></select></label>
@@ -826,12 +835,16 @@ const SIZE_FALLBACK = {
 /* ---------- Persistence ---------- */
 const KEY = 'mrp.v1';
 function loadStore() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } }
+let lastSaved = (() => { try { return localStorage.getItem('mrp.v1'); } catch { return null; } })() ?? '';
 function saveStore() {
   try {
-    localStorage.setItem(KEY, JSON.stringify({
+    const txt = JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
       boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay, camSides: state.camSides, horizons: state.horizons, places: state.places, wish: state.wish,
-    }));
+    });
+    localStorage.setItem(KEY, txt);
+    if (txt !== lastSaved && typeof syncEdited === 'function') syncEdited();   // a real change: sync it
+    lastSaved = txt;
   } catch { /* storage unavailable */ }
 }
 const saved = loadStore();
@@ -4796,6 +4809,139 @@ if (window.__mrpMoved) {
   b.hidden = false; $('#movedClose').addEventListener('click', () => { b.hidden = true; });
   track('moved-auto');
 }
+/* ---------- Sync: one setup on every device. Settings are encrypted in the browser with a key made from the person's
+   sync code; the server (worker.js /api/sync) stores the opaque blob under a hash of the code. ---------- */
+const SYNC_KEYS = ['mrp.v1', 'mrp.optics'];
+const syncCfg = () => { try { return JSON.parse(localStorage.getItem('mrp.sync') || 'null'); } catch { return null; } };
+const syncSetCfg = (c) => { try { c ? localStorage.setItem('mrp.sync', JSON.stringify(c)) : localStorage.removeItem('mrp.sync'); } catch {} };
+const syncOk = !!(window.crypto?.subtle) && /(^|\.)fovplanner\.com$|^localhost$|^127\.0\.0\.1$/.test(location.hostname);
+let syncReady = false, syncTimer = null, syncBusy = false;
+function syncNewCode() {   // 20 characters from a 32-letter alphabet (100 bits), shown in groups of four
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', b = crypto.getRandomValues(new Uint8Array(20));
+  return Array.from(b, (x) => A[x % 32]).join('').match(/.{4}/g).join('-');
+}
+const syncNorm = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+async function syncKeys(code) {
+  const enc = new TextEncoder(), c = syncNorm(code);
+  const idBuf = await crypto.subtle.digest('SHA-256', enc.encode('fovplanner-sync-id:' + c));
+  const id = Array.from(new Uint8Array(idBuf), (x) => x.toString(16).padStart(2, '0')).join('');
+  const base = await crypto.subtle.importKey('raw', enc.encode(c), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: enc.encode('fovplanner-sync-key'), iterations: 150000, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  return { id, key };
+}
+const b64 = (u8) => { let t = ''; for (let i = 0; i < u8.length; i += 32768) t += String.fromCharCode(...u8.subarray(i, i + 32768)); return btoa(t); };
+const unb64 = (t) => Uint8Array.from(atob(t), (c) => c.charCodeAt(0));
+async function syncPull(code) {
+  const { id, key } = await syncKeys(code);
+  const r = await fetch('/api/sync/' + id, { cache: 'no-store' });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error('sync server ' + r.status);
+  const d = await r.json();
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(d.iv) }, key, unb64(d.ct));
+  return { ts: d.ts, data: JSON.parse(new TextDecoder().decode(pt)) };
+}
+async function syncPush(code, ts) {
+  const { id, key } = await syncKeys(code);
+  const data = {}; for (const k of SYNC_KEYS) { const v = localStorage.getItem(k); if (v != null) data[k] = v; }
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(data))));
+  const r = await fetch('/api/sync/' + id, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ v: 1, ts, iv: b64(iv), ct: b64(ct) }) });
+  if (r.status === 409) return false;   // another device saved something newer meanwhile
+  if (!r.ok) throw new Error('sync server ' + r.status);
+  return true;
+}
+function syncApply(remote, note) {   // replace this browser's setup with the synced one and reload
+  for (const k of SYNC_KEYS) { if (remote.data[k] != null) localStorage.setItem(k, remote.data[k]); else localStorage.removeItem(k); }
+  const c = syncCfg(); syncSetCfg({ ...c, ts: remote.ts, edit: remote.ts });
+  try { sessionStorage.setItem('mrp.syncNote', note); } catch {}
+  location.reload();
+}
+function syncEdited() {   // called by saveStore on a real change
+  const c = syncCfg(); if (!c || !syncReady) return;
+  c.edit = Date.now(); syncSetCfg(c);
+  clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 2500); syncMsg('saving…');
+}
+async function syncNow() {
+  const c = syncCfg(); if (!c || syncBusy) return;
+  syncBusy = true;
+  try {
+    if ((c.edit || 0) > (c.ts || 0)) {
+      if (await syncPush(c.code, c.edit)) { syncSetCfg({ ...syncCfg(), ts: c.edit }); syncMsg('saved'); }
+      else { const r = await syncPull(c.code); if (r && r.ts > (c.edit || 0)) return syncApply(r, 'This device was behind; it now has the newer setup from your other device.'); }
+    } else syncMsg('up to date');
+  } catch { syncMsg('offline: will retry'); } finally { syncBusy = false; }
+}
+async function syncCheck(onStart) {   // is there something newer on the server?
+  const c = syncCfg(); if (!c) { syncReady = true; return; }
+  try {
+    const r = await syncPull(c.code);
+    syncReady = true;
+    if (!r) { const cc = syncCfg(); cc.edit = Math.max(cc.edit || 0, Date.now()); syncSetCfg(cc); return syncNow(); }   // nothing stored yet: upload this one
+    if (r.ts > (c.ts || 0) && r.ts > (c.edit || 0)) {
+      if (onStart) return syncApply(r, 'Updated from your other device.');
+      return syncOffer(r);
+    }
+    if ((c.edit || 0) > (c.ts || 0)) return syncNow();
+    syncMsg('up to date');
+  } catch { syncReady = true; syncMsg('offline'); }
+}
+function syncOffer(r) {   // the page was already open: don't reload under the person's hands, offer it
+  const b = $('#movedBanner');
+  b.querySelector('div').innerHTML = 'Your setup was changed on another device. <button type="button" id="syncReload">Load it</button>';
+  b.hidden = false; $('#syncReload').onclick = () => syncApply(r, 'Updated from your other device.'); $('#movedClose').onclick = () => { b.hidden = true; };
+}
+const syncMsg = (t) => { const el = $('#syncState'); if (el) el.textContent = syncCfg() ? `· on · ${t}` : ''; };
+function renderSync() {
+  const box = $('#syncBody'), c = syncCfg(); if (!box) return;
+  if (!syncOk) { box.innerHTML = 'Sync works on <a href="https://fovplanner.com/">fovplanner.com</a>.'; return; }
+  if (!c) {
+    box.innerHTML = `Keep the same equipment, rigs, places, wish list and settings on every computer, phone and browser.
+      Turn it on here, then open the link it gives you once on each other device.
+      <div class="row"><button type="button" class="icon" id="syncOn">Turn on sync</button>
+      <button type="button" class="icon ghost" id="syncJoin">I have a sync code…</button></div>
+      <div class="note" style="margin-top:6px">Your settings are encrypted on this device before they are sent; the server can't read them. Private images stay on each device (use Export with images for those).</div>`;
+    syncMsg(''); return;
+  }
+  const link = `${location.origin}/#sync=${syncNorm(c.code)}`;
+  box.innerHTML = `Sync is on. Your sync code: <code>${esc(c.code)}</code>
+    <div class="row"><button type="button" class="icon" id="syncCopy">Copy link for another device</button>
+      <button type="button" class="icon ghost" id="syncNowBtn">Sync now</button>
+      <button type="button" class="icon ghost" id="syncOff">Turn off on this device</button></div>
+    <div class="note" style="margin-top:6px">Open the link once on each device (or tap <i>I have a sync code</i> there and type the code). Anyone with the code can see and change your setup, so keep it to yourself.</div>
+    <div class="note" id="syncLinkOut" style="word-break:break-all"></div>`;
+  syncMsg(syncReady ? 'up to date' : 'checking…');
+  $('#syncCopy').onclick = async () => { try { await navigator.clipboard.writeText(link); $('#syncLinkOut').textContent = 'Copied: ' + link; } catch { $('#syncLinkOut').textContent = link; } };
+}
+async function syncJoin(code) {
+  code = syncNorm(code); if (code.length < 16) { alert('That does not look like a sync code.'); return; }
+  const pretty = code.match(/.{1,4}/g).join('-');
+  try {
+    const r = await syncPull(pretty);
+    if (!r) { alert('No synced setup was found for that code. Check it, or turn on sync on the device that has your setup first.'); return; }
+    if (!confirm('Replace the equipment, rigs and settings in this browser with your synced setup?')) return;
+    syncSetCfg({ code: pretty, ts: 0, edit: 0 });
+    syncApply(r, 'This device is now linked: it has your synced setup and will stay in step.');
+  } catch { alert('Could not reach the sync server or read the setup (wrong code?).'); }
+}
+document.addEventListener('click', async (e) => {
+  const id = e.target.id;
+  if (id === 'syncOn') {
+    syncSetCfg({ code: syncNewCode(), ts: 0, edit: Date.now() }); syncReady = true;
+    renderSync(); syncMsg('saving…'); await syncNow(); track('sync/on');
+  } else if (id === 'syncJoin') { const v = prompt('Sync code (from the device that has your setup):'); if (v) syncJoin(v); }
+  else if (id === 'syncOff') { if (confirm('Stop syncing in this browser? Your setup stays here, and on your other devices.')) { syncSetCfg(null); renderSync(); } }
+  else if (id === 'syncNowBtn') { syncMsg('checking…'); await syncCheck(false); }
+});
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && syncCfg() && syncReady) syncCheck(false); });
+if (syncOk) {
+  renderSync();
+  const take = (k) => { try { const v = sessionStorage.getItem(k); sessionStorage.removeItem(k); return v; } catch { return null; } };
+  const linkCode = take('mrp.syncLink'), note = take('mrp.syncNote');
+  if (note) { const b = $('#movedBanner'); b.querySelector('div').textContent = note; b.hidden = false; $('#movedClose').addEventListener('click', () => { b.hidden = true; }); }
+  if (linkCode) { syncReady = true; setTimeout(() => syncJoin(linkCode), 300); }
+  else setTimeout(() => syncCheck(true), 400);
+} else { syncReady = true; renderSync(); }
+
 // Ask the browser not to clear this site's storage when space runs low (and Safari not to expire it)
 try { navigator.storage?.persist?.(); } catch {}
 

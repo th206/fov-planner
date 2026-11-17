@@ -140,6 +140,12 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Drop in one raw FITS sub: the planner measures hundreds of stars on your device and reports **sensor tilt** (star size across the frame), **back-focus spacing** (radial or tangential stretching in the corners) and **guiding/wind/flexure** (the same stretch everywhere), with a 3×3 star-size map, a whisker plot and a history per rig
 - **Which tilt screw:** a one-time daylight card test per camera maps the plot to the camera body (clock positions seen from the back, USB port at 12), optionally naming your tilt plate's adjusters. A second sub taken after nudging focus inward shows which side sits too far from the telescope and which way to turn. This test works wherever focus was set.
 
+## Sync across devices (Gear tab)
+
+- *Turn on sync* gives you a sync code and a link. Open the link once on each other computer, phone or browser (or type the code under *I have a sync code*), and they all share one setup: equipment, rigs, filters, places, horizons, wish list with notes, camera sides, optics history and settings
+- Changes are uploaded a few seconds after you make them; a device picks up newer changes when it opens or comes back to the foreground (an open page offers *Load it* rather than reloading under you). If two devices change things at nearly the same time, the later save wins
+- The settings are encrypted in the browser (AES-GCM, key derived from the code with PBKDF2) and stored in the site's R2 bucket under a hash of the code (`sync/…json`, worker.js `/api/sync/`), so the server can't read them. Anyone with the code can, so keep it to yourself. Private images are not synced (use Export with images)
+
 ## Your data
 
 - Equipment, rigs, filters, settings, default location and images are saved **only in your own browser** — nothing is uploaded, and other users never see or change your setup
