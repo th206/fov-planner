@@ -17,6 +17,7 @@ export default {
       if (p === '/api/solve' || p.startsWith('/api/solve/')) return await solveApi(req, env, url);
       if (p.startsWith('/t/')) return await serveTemp(env, p.slice(3));
       if (p.startsWith('/hips/')) return await hipsTile(req, p);
+      if (p.startsWith('/api/sync/')) return await syncApi(req, env, p);
     } catch (e) {
       return json({ error: e.message || String(e) }, e.status || 500);
     }
@@ -56,6 +57,34 @@ async function hipsTile(req, p) {
     } catch { hipsBad.set(base, Date.now()); /* try the next mirror */ } finally { clearTimeout(tm); }
   }
   return new Response('No survey mirror had this tile', { status: 404, headers: { 'access-control-allow-origin': '*' } });
+}
+
+// Settings sync between a person's devices. The browser encrypts the settings with a key made from the person's sync
+// code (AES-GCM, see index.html) and addresses them by a hash of that code, so this server only ever stores an opaque
+// blob it cannot read. Anyone who knows the code can read and replace that blob; nobody else can find it.
+const SYNC_MAX = 1024 * 1024;
+async function syncApi(req, env, p) {
+  const id = p.slice('/api/sync/'.length);
+  if (!/^[0-9a-f]{64}$/.test(id)) fail('Bad sync id.', 404);
+  const key = `sync/${id}.json`, H = { 'cache-control': 'no-store' };
+  if (req.method === 'GET') {
+    const o = await env.GALLERY.get(key);
+    if (!o) return json({ error: 'none' }, 404, H);
+    return new Response(o.body, { headers: { ...JSON_H, ...H } });
+  }
+  if (req.method === 'PUT') {
+    const body = await req.text();
+    if (body.length > SYNC_MAX) fail('Settings too large to sync.', 413);
+    let d; try { d = JSON.parse(body); } catch { fail('Bad sync data.'); }
+    if (d?.v !== 1 || typeof d.iv !== 'string' || typeof d.ct !== 'string' || !(d.ts > 0)) fail('Bad sync data.');
+    // never let an older copy overwrite a newer one (two devices saving at nearly the same time)
+    const cur = await env.GALLERY.head(key), curTs = +(cur?.customMetadata?.ts || 0);
+    if (curTs > d.ts) return json({ ok: false, newer: curTs }, 409, H);
+    await env.GALLERY.put(key, body, { httpMetadata: { contentType: 'application/json' }, customMetadata: { ts: String(d.ts) } });
+    return json({ ok: true, ts: d.ts }, 200, H);
+  }
+  if (req.method === 'DELETE') { await env.GALLERY.delete(key); return json({ ok: true }, 200, H); }
+  fail('Method not allowed.', 405);
 }
 
 function fail(msg, status = 400) { const e = new Error(msg); e.status = status; throw e; }
