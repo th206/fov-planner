@@ -83,6 +83,13 @@
   .seasonstrip span { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; font-size: 10px; padding: 2px 0; border-radius: 4px; overflow: hidden; color: var(--text); isolation: isolate; background: rgba(255,255,255,.04); }
   .seasonstrip span i { position: absolute; inset: 0; background: #3fb950; opacity: calc(var(--a) * 0.75); z-index: -1; }
   .seasonstrip span b { font-size: 10px; }
+  .measurebtn { background: none; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 2px 8px; font-size: 12px; cursor: pointer; }
+  .measurebtn.on { border-color: #ffd33d; color: #ffd33d; }
+  #measureBox { position: absolute; left: 10px; bottom: 76px; z-index: 21; max-width: min(460px, calc(100% - 20px)); background: rgba(10,13,20,.88); border: 1px solid #ffd33d88;
+    border-radius: 8px; padding: 7px 10px; font-size: 12px; line-height: 1.5; }
+  #measureBox .mbig { font-size: 15px; font-weight: 700; color: #ffd33d; }
+  #measureBox button { float: right; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; }
+  main.measuring #aladin { cursor: crosshair; }
   .optplot { width: 100%; height: auto; border-radius: 8px; margin: 8px 0 4px; border: 1px solid var(--line); }
   .satbox { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
   .satbox .row { gap: 6px; align-items: center; } .satbox select { max-width: 200px; }
@@ -692,8 +699,10 @@
       <label class="dustlbl" title="Show or hide your own photos (Gallery and My images) on the sky"><input type="checkbox" id="photosOn"> Photos</label>
       <span id="photoNav" class="photonav" hidden><button type="button" id="phPrev" title="Previous photo of this field">◀</button><span id="phLbl"></span><button type="button" id="phNext" title="Next photo of this field">▶</button><button type="button" id="phAll" title="Show all photos of this field on top of each other">all</button></span>
       <label class="dustlbl" title="Glow of interstellar dust (IRAS 100 µm). Dark nebulae are dust clouds: they show up bright here, so you can see their shape and extent. Turns on by itself for dark nebulae."><input type="checkbox" id="dustOn"> Dust</label>
+      <button type="button" id="measureBtn" class="measurebtn" title="Measure the angle between two points: tap a star or object, then a second one (Esc to stop)">⟷ Measure</button>
     </div>
     <div id="legend"></div>
+    <div id="measureBox" hidden></div>
     <div id="fatal"></div>
   </main>
 </div>
@@ -933,10 +942,85 @@ async function initAladin() {
     drawFrames(); updateHud();
     if (!p.dragging) scheduleImageRefresh();
   });
-  aladin.on('zoomChanged', () => { updateHud(); scheduleImageRefresh(); });
+  aladin.on('zoomChanged', () => { updateHud(); scheduleImageRefresh(); if (measure.pts.length) drawMeasure(); });
   shownSurvey = effectiveSurvey(); drawFrames(); updateHud(); applyBoost(); applySurvey(); renderImageList();
   applyDust();
   probeMirrors();
+}
+
+/* ---------- Measure: angular distance between two points (snaps to a catalogue object or a Gaia star) ---------- */
+const measure = { on: false, pts: [], ov: null, seq: 0 };
+const dms = (deg) => { const t = Math.round(deg * 36000), d = Math.floor(t / 36000), m = Math.floor((t % 36000) / 600), s = (t % 600) / 10;
+  return d ? `${d}° ${String(m).padStart(2, '0')}′ ${s.toFixed(1).padStart(4, '0')}″` : m ? `${m}′ ${s.toFixed(1).padStart(4, '0')}″` : `${s.toFixed(1)}″`; };
+function posAngle(ra1, d1, ra2, d2) {   // position angle of point 2 seen from point 1, east of north
+  const a = (ra2 - ra1) * D2R, p1 = d1 * D2R, p2 = d2 * D2R;
+  return ((Math.atan2(Math.sin(a), Math.cos(p1) * Math.tan(p2) - Math.sin(p1) * Math.cos(a)) * R2D) + 360) % 360;
+}
+function gcPoints(a, b, n = 48) {        // points along the great circle, so long arcs are drawn correctly
+  const v = ([r, d]) => [Math.cos(d * D2R) * Math.cos(r * D2R), Math.cos(d * D2R) * Math.sin(r * D2R), Math.sin(d * D2R)];
+  const p = v(a), q = v(b), om = Math.acos(Math.min(1, p[0] * q[0] + p[1] * q[1] + p[2] * q[2])); if (om < 1e-9) return [a, b];
+  return Array.from({ length: n + 1 }, (_, k) => { const t = k / n, s1 = Math.sin((1 - t) * om) / Math.sin(om), s2 = Math.sin(t * om) / Math.sin(om);
+    const x = s1 * p[0] + s2 * q[0], y = s1 * p[1] + s2 * q[1], z = s1 * p[2] + s2 * q[2];
+    return [((Math.atan2(y, x) * R2D) + 360) % 360, Math.asin(z / Math.hypot(x, y, z)) * R2D]; });
+}
+function drawMeasure() {
+  if (!aladin) return;
+  if (!measure.ov) { measure.ov = A.graphicOverlay({ color: '#ffd33d', lineWidth: 2, name: 'Measure' }); aladin.addOverlay(measure.ov); }
+  const unsel = () => { try { aladin.view?.unselectObjects?.(); } catch {} };   // Aladin "selects" a shape under a tap and keeps drawing it highlighted
+  unsel(); measure.ov.removeAll(); setTimeout(unsel, 60);
+  const px = aladin.getFov()[0] / ($('#aladin').clientWidth || 800);   // degrees per screen pixel
+  for (const p of measure.pts) measure.ov.add(A.circle(p.ra, p.dec, 7 * px, { color: '#ffd33d', lineWidth: 2 }));
+  if (measure.pts.length === 2) measure.ov.add(A.polyline(gcPoints([measure.pts[0].ra, measure.pts[0].dec], [measure.pts[1].ra, measure.pts[1].dec]), { color: '#ffd33d', lineWidth: 2 }));
+  renderMeasure();
+}
+function renderMeasure() {
+  const box = $('#measureBox'), P = measure.pts;
+  box.hidden = !measure.on && !P.length;
+  const lbl = (p) => `${p.name ? `<b>${esc(p.name)}</b> ` : ''}<span class="note">${raHms(p.ra)} ${decDms(p.dec)}</span>`;
+  const close = '<button type="button" id="measureClose" title="Stop measuring">✕</button>';
+  if (!P.length) { box.innerHTML = close + 'Tap the first point: a star or object snaps into place.'; return; }
+  if (P.length === 1) { box.innerHTML = close + `A: ${lbl(P[0])}<br>Now tap the second point.`; return; }
+  const [a, b] = P, sep = angSep(a.ra, a.dec, b.ra, b.dec), pa = posAngle(a.ra, a.dec, b.ra, b.dec);
+  let dra = ((b.ra - a.ra + 540) % 360) - 180; const ddec = b.dec - a.dec;
+  const draT = dra / 15 * 3600, sgn = (x) => (x < 0 ? '−' : '+');
+  const rigs = state.rigs.filter((r) => r.on).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g).slice(0, 3);
+  box.innerHTML = close + `<span class="mbig">${dms(sep)}</span> <span class="note">= ${sep >= 1 ? sep.toFixed(3) + '°' : (sep * 60).toFixed(2) + '′'} · position angle ${pa.toFixed(1)}° (east of north)</span><br>
+    A: ${lbl(a)}<br>B: ${lbl(b)}<br>
+    <span class="note">ΔRA ${sgn(draT)}${Math.floor(Math.abs(draT) / 60)}m ${(Math.abs(draT) % 60).toFixed(1)}s (${sgn(dra)}${dms(Math.abs(dra) * Math.cos(((a.dec + b.dec) / 2) * D2R))} on the sky) · ΔDec ${sgn(ddec)}${dms(Math.abs(ddec))}${rigs.length ? '<br>' + rigs.map(({ r, g }) =>
+      `<span class="rigdot" style="--c:${r.color}"></span>${Math.round(sep * 3600 / g.scale)} px on ${esc(g.s.name)} (${(sep / Math.max(g.w, g.h) * 100).toFixed(0)}% of the long side)`).join(' · ') : ''}</span>`;
+}
+async function measureClick(ra, dec) {
+  if (measure.pts.length === 2) measure.pts = [];
+  const px = aladin.getFov()[0] / ($('#aladin').clientWidth || 800), rad = 14 * px;
+  // snap: a catalogue object close to the tap, else the nearest Gaia star
+  const near = CAT.map((c) => ({ c, d: angSep(ra, dec, c.ra, c.dec) })).filter((x) => x.d < rad).sort((a, b) => a.d - b.d)[0];
+  const pt = near ? { ra: near.c.ra, dec: near.c.dec, name: near.c.id + (near.c.name ? ' · ' + near.c.name : '') } : { ra, dec, name: '' };
+  measure.pts.push(pt); drawMeasure();
+  if (near) return;
+  const seq = ++measure.seq;
+  try {
+    const t = await vizierText(`-source=I/355/gaiadr3&-out=RA_ICRS,DE_ICRS,Gmag&-c=${encodeURIComponent(`${ra.toFixed(5)} ${dec >= 0 ? '+' : ''}${dec.toFixed(5)}`)}&-c.rd=${rad.toFixed(5)}&Gmag=${encodeURIComponent('<' + (px * 3600 > 20 ? 11 : px * 3600 > 5 ? 14 : 17))}&-sort=Gmag&-out.max=1&-oc.form=dec&-out.meta=-h-u-D`, 8000);
+    const row = t.split('\n').find((l) => /^\s*\d/.test(l)); if (!row || seq !== measure.seq) return;
+    const [sra, sdec, g] = row.split('\t').map(Number); if (![sra, sdec].every(Number.isFinite)) return;
+    Object.assign(pt, { ra: sra, dec: sdec, name: `star G ${g.toFixed(1)}` }); drawMeasure();
+  } catch { /* no snap: keep the tapped point */ }
+}
+function setMeasure(on) {
+  measure.on = on; $('#measureBtn').classList.toggle('on', on); document.querySelector('main').classList.toggle('measuring', on);
+  if (!on) { measure.pts = []; measure.ov?.removeAll(); }
+  renderMeasure(); if (on) track('measure');
+}
+$('#measureBtn').addEventListener('click', () => setMeasure(!measure.on));
+$('#measureBox').addEventListener('click', (e) => { if (e.target.id === 'measureClose') setMeasure(false); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && measure.on) setMeasure(false); });
+{ // a tap (not a drag) on the map adds a point while measuring
+  let down = null; const el = $('#aladin');
+  el.addEventListener('pointerdown', (e) => { down = measure.on ? [e.clientX, e.clientY] : null; }, true);
+  el.addEventListener('pointerup', (e) => {
+    if (!down || !measure.on || !aladin) return; const moved = Math.hypot(e.clientX - down[0], e.clientY - down[1]); down = null; if (moved > 6) return;
+    const r = el.getBoundingClientRect(), w = aladin.pix2world(e.clientX - r.left, e.clientY - r.top);
+    if (w && Number.isFinite(w[0])) measureClick(((w[0] % 360) + 360) % 360, w[1]);
+  }, true);
 }
 
 function drawFrames() {
