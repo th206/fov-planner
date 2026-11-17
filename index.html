@@ -4908,7 +4908,7 @@ function renderSync(prefillName) {
   if (!c) {
     box.innerHTML = `Keep the same equipment, rigs, places, wish list and settings on every computer, phone and browser.
       Pick a sync name and a 6-digit PIN here, then enter the same two on your other devices.
-      <div class="row"><label style="flex:1">Sync name <input id="syncNameIn" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="e.g. tanwir-astro" style="flex:1;min-width:0" value="${esc(prefillName || '')}"></label></div>
+      <div class="row"><label style="flex:1">Sync name <input id="syncNameIn" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="e.g. orion-hunter" style="flex:1;min-width:0" value="${esc(prefillName || '')}"></label></div>
       <div class="row"><label>PIN <input id="syncPinIn" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="current-password" placeholder="6 digits" style="width:110px"></label>
         <button type="button" class="icon" id="syncGo">Connect</button></div>
       <div class="note" id="syncErr" style="margin-top:4px"></div>
