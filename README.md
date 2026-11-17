@@ -114,6 +114,11 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Linear FITS data is auto-stretched; stretched data is shown as-is; unsolved FITS are placed approximately from RA/DEC + focal length + pixel size, with a rotation slider
 - Stored in your browser and shown automatically whenever that part of the sky is in view, with opacity and flip controls
 
+## Sky images (tile cache)
+
+- On fovplanner.com the DSS2, 2MASS and IRIS sky images load through the site's own Cloudflare cache (`/hips/…` in worker.js). A tile is fetched once from whichever source is up (CDS Strasbourg → ESA Madrid → IRSA Caltech → CDS backup) and then kept at the nearest Cloudflare data centre for 30 days, so repeat views are fast and the map keeps working when CDS is down. A source that fails is skipped for 5 minutes
+- Each tile counts as one Worker request (free plan: 100,000 a day)
+
 ## Catalogue fallbacks
 
 - The built-in catalogue has all 313 Sharpless objects (minus those already listed under an NGC/IC/Messier name); the planetary nebulae among them (Sh2-200, Sh2-188, Sh2-216, Sh2-274 Medusa, Sh2-290 Abell 31 …) are typed as planetaries, using SIMBAD's classification. VizieR falls back from CDS to the Harvard and Cape Town (IDIA) mirrors, and a mirror's error page counts as a failure

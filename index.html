@@ -1010,13 +1010,18 @@ function effectiveSurvey() {
 }
 /* Survey mirrors: CDS IDs need the CDS registry (MocServer) to be up, so the main surveys are loaded by direct URL,
    from whichever copy answers: CDS Strasbourg, its second server, or ESA (Madrid). */
+// Where the survey tiles come from. On fovplanner.com the first choice is our own Cloudflare cache (/hips/…, see worker.js):
+// tiles are kept at the nearest Cloudflare data centre and fetched from whichever mirror is up. Then the mirrors directly.
+const HIPS_PROXY = /(^|\.)fovplanner\.com$/.test(location.hostname) ? location.origin + '/hips/' : null;
 const MIRRORS = {
-  'CDS/P/DSS2/color': ['https://alasky.cds.unistra.fr/DSS/DSSColor', 'https://alaskybis.cds.unistra.fr/DSS/DSSColor', 'https://skies.esac.esa.int/DSSColor'],
-  'CDS/P/IRIS/color': ['https://alasky.cds.unistra.fr/IRISColor', 'https://alaskybis.cds.unistra.fr/IRISColor', 'https://skies.esac.esa.int/IRISColor'],
-  'CDS/P/2MASS/color': ['https://alasky.cds.unistra.fr/2MASS/Color', 'https://alaskybis.cds.unistra.fr/2MASS/Color', 'https://skies.esac.esa.int/2MASSColor'],
+  'CDS/P/DSS2/color': [HIPS_PROXY && HIPS_PROXY + 'dss', 'https://alasky.cds.unistra.fr/DSS/DSSColor', 'https://alaskybis.cds.unistra.fr/DSS/DSSColor', 'https://skies.esac.esa.int/DSSColor', 'https://irsa.ipac.caltech.edu/data/hips/CDS/DSS2/color'].filter(Boolean),
+  'CDS/P/IRIS/color': [HIPS_PROXY && HIPS_PROXY + 'iris', 'https://alasky.cds.unistra.fr/IRISColor', 'https://alaskybis.cds.unistra.fr/IRISColor', 'https://skies.esac.esa.int/IRISColor', 'https://skies.esac.esa.int/IRISColor'].filter(Boolean),
+  'CDS/P/2MASS/color': [HIPS_PROXY && HIPS_PROXY + '2mass', 'https://alasky.cds.unistra.fr/2MASS/Color', 'https://alaskybis.cds.unistra.fr/2MASS/Color', 'https://skies.esac.esa.int/2MASSColor', 'https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color'].filter(Boolean),
 };
-let mirrorIdx = (() => { try { const v = JSON.parse(localStorage.getItem('mrp.mirror')); return v && Date.now() - v.t < 6 * 3600e3 ? v.i : 0; } catch { return 0; } })();
-let cdsDown = mirrorIdx === 2;
+const mirrorHost = (i) => { try { return new URL(MIRRORS['CDS/P/DSS2/color'][i]).host; } catch { return ''; } };
+const isCdsOrOurs = (i) => i === 0 || /cds\.unistra\.fr$/.test(mirrorHost(i));
+let mirrorIdx = (() => { try { const v = JSON.parse(localStorage.getItem('mrp.mirror')); return v && Date.now() - v.t < 6 * 3600e3 && v.n === MIRRORS['CDS/P/DSS2/color'].length ? v.i : 0; } catch { return 0; } })();
+let cdsDown = !isCdsOrOurs(mirrorIdx);
 const surveyUrl = (id) => (MIRRORS[id] ? MIRRORS[id][mirrorIdx] : id);
 async function probeMirrors() {      // find the first DSS copy that answers; switch the map if the current one is down
   const probe = (u, ms) => new Promise((res) => { const ctl = new AbortController(); const tm = setTimeout(() => { ctl.abort(); res(false); }, ms);
@@ -1024,9 +1029,9 @@ async function probeMirrors() {      // find the first DSS copy that answers; sw
   const list = MIRRORS['CDS/P/DSS2/color'];
   const ok = await Promise.all(list.map((u) => probe(u, 3500)));
   const pick = ok.findIndex(Boolean);
-  if (pick < 0 || pick === mirrorIdx) { cdsDown = mirrorIdx === 2; return; }
-  mirrorIdx = pick; cdsDown = pick === 2;
-  try { localStorage.setItem('mrp.mirror', JSON.stringify({ i: pick, t: Date.now() })); } catch {}
+  if (pick < 0 || pick === mirrorIdx) { cdsDown = !isCdsOrOurs(mirrorIdx); return; }
+  mirrorIdx = pick; cdsDown = !isCdsOrOurs(pick);
+  try { localStorage.setItem('mrp.mirror', JSON.stringify({ i: pick, t: Date.now(), n: list.length })); } catch {}
   applySurvey(true); dustShown = null; applyDust();
 }
 let shownSurvey = null;
@@ -1040,7 +1045,7 @@ function applySurvey(force) {
   const nb = id.includes('simg.de');
   $('#surveyCredit').innerHTML = nb ? 'Narrowband: <a href="http://www.simg.de/nebulae3/dr0_2/" target="_blank" rel="noopener">NSNS, S. Ziegenbalg</a> (CC BY-NC-SA)'
     : id.includes('IPHAS') ? 'Hα: IPHAS DR2' : '';
-  if (cdsDown) $('#surveyCredit').innerHTML += (($('#surveyCredit').innerHTML ? ' · ' : '') + (MIRRORS[id] ? 'CDS is down: images from the ESA mirror'
+  if (cdsDown) $('#surveyCredit').innerHTML += (($('#surveyCredit').innerHTML ? ' · ' : '') + (MIRRORS[id] ? `CDS is down: images from ${/esa/.test(mirrorHost(mirrorIdx)) ? 'the ESA mirror' : /ipac/.test(mirrorHost(mirrorIdx)) ? 'the Caltech (IRSA) mirror' : 'a mirror'}`
     : id.startsWith('CDS/') ? '⚠ CDS is not responding, so this survey may not load. DSS2 color and 2MASS work from a mirror.' : ''));
   $('#surveyCredit').style.display = $('#surveyCredit').innerHTML ? '' : 'none';
   const lbl = state.survey === 'auto' ? `Auto · ${nb ? 'narrowband' : 'DSS'}` : null;
