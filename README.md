@@ -60,6 +60,10 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Sky tab → **Horizon**: enter how high obstructions reach in eight directions, or import an *azimuth altitude* skyline file (N.I.N.A. `.hrz`, Stellarium). Saved per observing site (within 5 km), so a flat site stays flat
 - The altitude chart shades the obstruction in the target's direction through the night and reports hours clear of it (and hours lost). Tonight's picks, comets and the forecast verdict count only clear time; the *On target* row shows `tree` when it is hidden
 
+## Wish list
+
+- *☆ Wish list* on the target card saves the target with its framing (view centre and each rig's rotation). The Wish list card on the Tonight tab lists them sorted by usable hours on the chosen night (pick another night in the Moon strip), with times and best month. Tap one to load it and see its altitude curve, *Frame ▸* to open it on the map with the saved framing, ✕ to remove. Each target can carry a note (✎ in the list, or the note box on the target card when it is on the list), saved as you type. Saved in this browser and included in backups
+
 ## Measuring on the map
 
 - *⟷ Measure* in the map toolbar: tap two points to get the angular distance (° ′ ″), the position angle east of north, ΔRA and ΔDec, and the distance in pixels on each active rig. A tap near a catalogued object snaps to it; otherwise it snaps to the brightest nearby Gaia star (when the catalogue answers). Tap again to start a new measurement; ✕ or Esc stops

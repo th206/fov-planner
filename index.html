@@ -90,6 +90,18 @@
   #measureBox .mbig { font-size: 15px; font-weight: 700; color: #ffd33d; }
   #measureBox button { float: right; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; }
   main.measuring #aladin { cursor: crosshair; }
+  #targetCard { position: relative; }
+  #targetCard .tgtsum { padding-right: 112px; }
+  .wishbtn { position: absolute; right: 10px; top: 8px; z-index: 2; font-size: 12px; padding: 2px 8px; }
+  .wishbtn.on { color: #ffd33d; border-color: #ffd33d88; }
+  .wishrow { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-top: 1px solid var(--line); cursor: pointer; }
+  .wishrow:first-child { border-top: none; }
+  .wishrow .wmain { flex: 1; min-width: 0; }
+  .wishrow.loaded .wmain b { color: var(--accent); }
+  .wishrow button { flex: none; }
+  .wnote { margin-top: 3px; font-size: 12px; color: var(--text); opacity: .85; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .wishnote { width: 100%; box-sizing: border-box; margin-top: 6px; font: inherit; font-size: 12.5px; resize: vertical; }
+  #wishNoteT { margin: 4px 0 6px; }
   .optplot { width: 100%; height: auto; border-radius: 8px; margin: 8px 0 4px; border: 1px solid var(--line); }
   .satbox { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
   .satbox .row { gap: 6px; align-items: center; } .satbox select { max-width: 200px; }
@@ -421,6 +433,7 @@
     </section>
 
     <section data-tab="frame" class="card" id="targetCard">
+      <button type="button" class="icon ghost wishbtn" id="wishBtn" hidden title="Save this target (and its framing) to your wish list">☆ Wish list</button>
       <details id="tgtDetails">
       <summary class="tgtsum"><span class="tgtlabel">Target</span> <span id="tgtSum" class="note">search for an object</span></summary>
       <div id="targetBody" class="note" style="margin-top:8px">Search for an object to see its details.</div>
@@ -432,6 +445,7 @@
         <label>PA° <input id="szPa" class="num" type="number" step="1" placeholder="0"></label>
       </div>
       </details>
+      <textarea id="wishNoteT" class="wishnote" rows="2" hidden placeholder="Notes for this target: filters, exposure, framing ideas…"></textarea>
     </section>
 
     <section data-tab="frame" class="card">
@@ -489,6 +503,11 @@
       </div>
     </section>
 
+
+    <section data-tab="tonight" class="card" id="wishCard">
+      <h2>Wish list <span class="note" id="wishFor" style="text-transform:none;letter-spacing:0"></span></h2>
+      <div id="wishList" class="note">Tap <b>☆ Wish list</b> on any target (Frame tab) to keep it here for planning.</div>
+    </section>
 
     <section data-tab="tonight" class="card" id="tonightCard">
       <h2>Tonight's targets <span class="note" id="tnCount"></span></h2>
@@ -811,7 +830,7 @@ function saveStore() {
   try {
     localStorage.setItem(KEY, JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay, camSides: state.camSides, horizons: state.horizons, places: state.places,
+      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay, camSides: state.camSides, horizons: state.horizons, places: state.places, wish: state.wish,
     }));
   } catch { /* storage unavailable */ }
 }
@@ -830,7 +849,8 @@ const state = {
   dust: saved.dust || 'auto',
   subLen: saved.subLen || 300,
   galOverlay: saved.galOverlay ?? true,
-  places: saved.places || null,   // saved observing sites [{name, lat, lon, tz}]
+  places: saved.places || null,
+  wish: saved.wish || [],   // wish list: [{key, label, t, size, center, rots, added}]   // saved observing sites [{name, lat, lon, tz}]
   horizons: saved.horizons || [],   // [{lat, lon, name, pts: [[az, alt], …]}] trees/buildings per observing site
   camSides: saved.camSides || {},   // per camera id: {port, mirror, rowOrder, screws} — which way the camera body sits on the optics-check plot
   windBias: null,
@@ -1836,7 +1856,73 @@ function computeTonight() {
   const darkHours = steps.length * dt / 3600e3;
   return { items, illum, moonUpHours, darkHours, tz, why };
 }
+/* ---------- Wish list: targets saved for later nights, with their framing ---------- */
+const wishKey = (t) => (t ? catKey(normId(t.mainId || t.name || '')) : '');
+function wishToggle() {
+  const t = state.target; if (!t || t.comet) return;
+  const k = wishKey(t), i = state.wish.findIndex((w) => w.key === k);
+  if (i >= 0) state.wish.splice(i, 1);
+  else state.wish.push({ key: k, label: $('#q').value || normId(t.mainId || t.name), t: { ...t }, size: state.size ? { ...state.size } : null,
+    center: state.center.slice(), rots: Object.fromEntries(state.rigs.filter((r) => r.on).map((r) => [r.id, r.rot || 0])), added: Date.now() });
+  saveStore(); wishMark(); renderWish(); track(i >= 0 ? 'wish/remove' : 'wish/add');
+}
+function wishMark() {
+  const t = state.target, b = $('#wishBtn'); if (!b) return;
+  b.hidden = !t || !!t.comet;
+  const on = !!t && state.wish.some((w) => w.key === wishKey(t));
+  b.classList.toggle('on', on); b.textContent = on ? '★ On wish list' : '☆ Wish list';
+  const ta = $('#wishNoteT'), w = on ? state.wish.find((x) => x.key === wishKey(t)) : null;
+  ta.hidden = !w; if (w) { ta.dataset.wnote = w.key; if (document.activeElement !== ta) ta.value = w.note || ''; } else delete ta.dataset.wnote;
+}
+let wishEditing = null;
+function renderWish() {
+  const box = $('#wishList'); if (!box) return;
+  const d = $('#night').value;
+  $('#wishFor').textContent = d ? `· night of ${new Date(d + 'T12:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}` : '';
+  if (!state.wish.length) { box.innerHTML = 'Tap <b>☆ Wish list</b> on any target (Frame tab) to keep it here for planning. Pick another night in the Moon strip (Sky tab) to plan ahead.'; return; }
+  const { t0 } = nightWindow(), cur = state.target ? wishKey(state.target) : '';
+  const rows = state.wish.map((w) => ({ w, u: usableHours(w.t.ra, w.t.dec, t0) })).sort((a, b) => b.u.h - a.u.h);
+  box.innerHTML = rows.map(({ w, u }) => {
+    const sz = w.size?.maj ? ` · ${w.size.maj >= 60 ? (w.size.maj / 60).toFixed(1) + '°' : Math.round(w.size.maj) + '′'}` : '';
+    const tag = u.h >= 2 ? `<span class="tag good">${u.h.toFixed(1)} h</span> ${hhmms(u.first)}–${hhmms(u.last)}` : u.h >= 0.5 ? `<span class="tag warn">${u.h.toFixed(1)} h</span> ${hhmms(u.first)}–${hhmms(u.last)}` : '<span class="tag bad">not up this night</span>';
+    return `<div class="wishrow ${w.key === cur ? 'loaded' : ''}" data-wish="${esc(w.key)}">
+      <div class="wmain"><b>${esc(normId(w.t.mainId || w.t.name))}</b> <span class="note">${esc(w.t.typeDesc || '')}${sz} · best ${bestMonth(w.t.ra)}</span><br>${tag}
+        ${w.note ? `<div class="wnote">${esc(w.note)}</div>` : ''}
+        ${wishEditing === w.key ? `<textarea class="wishnote" data-wnote="${esc(w.key)}" rows="3" placeholder="Filters, exposure, framing ideas, what to fix next time…">${esc(w.note || '')}</textarea>` : ''}</div>
+      <button type="button" class="icon ghost" data-wact="note" title="${w.note ? 'Edit the note' : 'Add a note'}">✎</button>
+      <button type="button" class="icon ghost" data-wact="frame" title="Open on the map with the saved framing">Frame ▸</button>
+      <button type="button" class="icon ghost" data-wact="del" title="Remove from the wish list">✕</button></div>`;
+  }).join('');
+}
+function wishLoad(k, go) {
+  const w = state.wish.find((x) => x.key === k); if (!w) return;
+  setTarget({ ...w.t }, w.size ? { ...w.size } : null, w.label);
+  // restore the saved framing: centre and the rotation of rigs that still exist
+  let rotated = false;
+  for (const r of state.rigs) if (w.rots && r.id in w.rots && r.rot !== w.rots[r.id]) { r.rot = w.rots[r.id]; rotated = true; }
+  if (rotated) { saveStore(); renderRigs(); }
+  if (w.center) { state.center = w.center.slice(); aladin?.gotoRaDec(...state.center); drawFrames(); updateHud(); }
+  if (go) setTab('frame'); else showVisibility();
+  renderWish();
+}
+$('#wishBtn').addEventListener('click', wishToggle);
+// notes: typed in the wish list or on the target card, saved as you type
+function wishSetNote(k, v) { const w = state.wish.find((x) => x.key === k); if (!w) return; w.note = v.slice(0, 2000); clearTimeout(wishSetNote.t); wishSetNote.t = setTimeout(saveStore, 400); }
+document.addEventListener('input', (e) => {
+  if (e.target.matches('[data-wnote]')) { wishSetNote(e.target.dataset.wnote, e.target.value); if (e.target.id === 'wishNoteT') return; const row = e.target.closest('.wishrow'); row?.querySelector('.wnote')?.remove(); }
+});
+document.addEventListener('focusout', (e) => { if (e.target.matches('.wishnote')) { saveStore(); wishMark(); if (e.target.id !== 'wishNoteT') { wishEditing = null; setTimeout(renderWish, 150); } else renderWish(); } });
+$('#wishList').addEventListener('click', (e) => {
+  const row = e.target.closest('[data-wish]'); if (!row) return;
+  const act = e.target.closest('[data-wact]')?.dataset.wact, k = row.dataset.wish;
+  if (e.target.closest('textarea')) return;
+  if (act === 'note') { wishEditing = wishEditing === k ? null : k; renderWish(); document.querySelector(`[data-wnote="${CSS.escape(k)}"]`)?.focus(); return; }
+  if (act === 'del') { if (state.wish.find((w) => w.key === k)?.note && !confirm('Remove this target and its note from the wish list?')) return;
+    state.wish = state.wish.filter((w) => w.key !== k); saveStore(); renderWish(); wishMark(); return; }
+  wishLoad(k, act === 'frame');
+});
 function renderTonight() {
+  renderWish();
   renderComets();
   if (!$('#tnList')) return;
   tnCache = computeTonight();
@@ -3689,6 +3775,7 @@ function findComet(q) {          // "C/2025 R2", "12P", "Tsuchinshan" …
 /* Which object is on the map: only that card is highlighted, and Tonight's headings name it */
 function loadedKey() { const t = state.target; if (!t) return ''; return t.comet ? 'comet:' + t.name : catKey(t.mainId || t.name || ''); }
 function markLoaded() {
+  wishMark();
   const k = loadedKey(), t = state.target;
   for (const el of document.querySelectorAll('.tn-item[data-key]')) {
     const on = !!k && el.dataset.key === k;
@@ -4623,7 +4710,7 @@ $('#addCam').addEventListener('click', () => $('#camTbl tbody').insertAdjacentHT
 $('#eqDlg').addEventListener('click', (e) => { if (e.target.matches('[data-del]')) e.target.closest('tr').remove(); });
 
 /* ---------- Backup: export / import ---------- */
-const BACKUP_KEYS = ['scopes', 'cams', 'filters', 'rigs', 'survey', 'boost', 'tn', 'seeing', 'useFcSeeing', 'defaultSite', 'follow', 'wxModel', 'dust', 'galOverlay', 'places', 'horizons', 'camSides', 'subLen'];
+const BACKUP_KEYS = ['scopes', 'cams', 'filters', 'rigs', 'survey', 'boost', 'tn', 'seeing', 'useFcSeeing', 'defaultSite', 'follow', 'wxModel', 'dust', 'galOverlay', 'places', 'horizons', 'camSides', 'subLen', 'wish'];
 const blobToDataUrl = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); });
 const dataUrlToBlob = async (u) => (await fetch(u)).blob();
 function downloadFile(name, text) {
