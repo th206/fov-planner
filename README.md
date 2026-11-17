@@ -142,9 +142,9 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 
 ## Sync across devices (Gear tab)
 
-- *Turn on sync* gives you a sync code and a link. Open the link once on each other computer, phone or browser (or type the code under *I have a sync code*), and they all share one setup: equipment, rigs, filters, places, horizons, wish list with notes, camera sides, optics history and settings
+- Pick a **sync name** (e.g. `tanwir-astro`) and a **6-digit PIN**, and press *Connect*. A new name saves this device's setup under it; on every other computer, phone or browser, enter the same name and PIN once and that device loads your setup. From then on they share one setup: equipment, rigs, filters, places, horizons, wish list with notes, camera sides, optics history and settings
 - Changes are uploaded a few seconds after you make them; a device picks up newer changes when it opens or comes back to the foreground (an open page offers *Load it* rather than reloading under you). If two devices change things at nearly the same time, the later save wins
-- The settings are encrypted in the browser (AES-GCM, key derived from the code with PBKDF2) and stored in the site's R2 bucket under a hash of the code (`sync/…json`, worker.js `/api/sync/`), so the server can't read them. Anyone with the code can, so keep it to yourself. Private images are not synced (use Export with images)
+- From name + PIN the browser derives a proof (sent to the server) and an encryption key (never sent): settings are encrypted with AES-GCM before they leave the device and stored in the site's R2 bucket under a hash of the name (`sync/…`, worker.js `/api/sync/`), so the server can't read them. After 5 wrong PINs a name is locked for 15 minutes, then for longer each time. Wrong PIN and "name taken" look the same from outside. Private images are not synced (use Export with images)
 
 ## Your data
 
