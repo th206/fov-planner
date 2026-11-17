@@ -16,12 +16,47 @@ export default {
       if (p.startsWith('/g/')) return await serveFile(req, env, p.slice(1));
       if (p === '/api/solve' || p.startsWith('/api/solve/')) return await solveApi(req, env, url);
       if (p.startsWith('/t/')) return await serveTemp(env, p.slice(3));
+      if (p.startsWith('/hips/')) return await hipsTile(req, p);
     } catch (e) {
       return json({ error: e.message || String(e) }, e.status || 500);
     }
     return env.ASSETS.fetch(req);
   },
 };
+
+// Sky-survey tiles (HiPS) through Cloudflare's edge cache. The surveys never change, so a tile fetched once is kept
+// at the nearest Cloudflare data centre for a month: later views load from there instead of from Strasbourg, Madrid or
+// Pasadena, and the map keeps working when one of them is down. Upstreams are tried in order.
+const HIPS = {
+  dss: ['https://alasky.cds.unistra.fr/DSS/DSSColor', 'https://skies.esac.esa.int/DSSColor', 'https://irsa.ipac.caltech.edu/data/hips/CDS/DSS2/color', 'https://alaskybis.cds.unistra.fr/DSS/DSSColor'],
+  '2mass': ['https://alasky.cds.unistra.fr/2MASS/Color', 'https://skies.esac.esa.int/2MASSColor', 'https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color', 'https://alaskybis.cds.unistra.fr/2MASS/Color'],
+  iris: ['https://alasky.cds.unistra.fr/IRISColor', 'https://skies.esac.esa.int/IRISColor', 'https://alaskybis.cds.unistra.fr/IRISColor'],
+};
+const hipsBad = new Map();   // upstream host → time it last failed (kept per Worker instance): skip it for 5 minutes
+async function hipsTile(req, p) {
+  const m = p.match(/^\/hips\/(dss|2mass|iris)\/((?:Norder\d{1,2}\/(?:Dir\d+\/)?(?:Npix\d+|Allsky)\.(?:jpg|png))|properties|Moc\.fits)$/);
+  if (!m || req.method !== 'GET') return new Response('Not found', { status: 404 });
+  const [, survey, rest] = m, cache = caches.default;
+  const key = new Request(`https://fovplanner.com/hips/${survey}/${rest}`);
+  const hit = await cache.match(key);
+  if (hit) return hit;
+  const now = Date.now(), list = HIPS[survey].filter((b) => !(now - (hipsBad.get(b) || 0) < 300000));
+  for (const base of list.length ? list : HIPS[survey]) {
+    const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 5000);
+    try {
+      const r = await fetch(`${base}/${rest}`, { signal: ctl.signal, cf: { cacheTtl: 2592000, cacheEverything: true } });
+      if (!r.ok) { hipsBad.set(base, Date.now()); continue; }   // includes 404: a mirror that is down (CDS answers every request with a 404 page then)
+      const meta = rest === 'properties' || rest === 'Moc.fits';
+      const type = r.headers.get('content-type') || (rest.endsWith('.png') ? 'image/png' : rest === 'properties' ? 'text/plain' : rest === 'Moc.fits' ? 'application/fits' : 'image/jpeg');
+      if (!meta && !/^image\//.test(type)) { hipsBad.set(base, Date.now()); continue; }   // an HTML error page from a sick mirror
+      const res = new Response(r.body, { headers: { 'content-type': type, 'cache-control': `public, max-age=${meta ? 86400 : 2592000}`,
+        'access-control-allow-origin': '*', 'x-hips-source': new URL(base).host } });
+      await cache.put(key, res.clone());
+      return res;
+    } catch { hipsBad.set(base, Date.now()); /* try the next mirror */ } finally { clearTimeout(tm); }
+  }
+  return new Response('No survey mirror had this tile', { status: 404, headers: { 'access-control-allow-origin': '*' } });
+}
 
 function fail(msg, status = 400) { const e = new Error(msg); e.status = status; throw e; }
 
