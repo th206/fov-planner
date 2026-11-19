@@ -107,6 +107,13 @@
   .evrow { padding: 6px 0; border-top: 1px solid var(--line); cursor: pointer; }
   .evrow:first-child { border-top: none; }
   .evrow:hover b { color: var(--accent); }
+  #verdictWhen, #skyWhen { text-transform: none; letter-spacing: 0; }
+  .nightback { font-size: 11px; padding: 1px 6px; }
+  .sitegrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 4px; }
+  .sitegrid > div { background: rgba(255,255,255,.03); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+  .sitegrid .sv { font-size: 18px; font-weight: 700; color: var(--text); }
+  .sitegrid svg { display: block; width: 100%; height: 26px; margin-top: 2px; }
+  #siteFeedBody code { font-size: 12px; color: var(--text); background: rgba(255,255,255,.06); padding: 1px 5px; border-radius: 4px; user-select: all; word-break: break-all; }
   .optplot { width: 100%; height: auto; border-radius: 8px; margin: 8px 0 4px; border: 1px solid var(--line); }
   .satbox { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
   .satbox .row { gap: 6px; align-items: center; } .satbox select { max-width: 200px; }
@@ -496,7 +503,7 @@
     </section>
 
     <section data-tab="tonight" class="card">
-      <h2><span>Visibility <span class="note loadedname" id="visName"></span></span> <input id="night" type="date" aria-label="Night of"></h2>
+      <h2><span>Visibility <span class="note loadedname" id="visName"></span></span> <input id="night" type="date" aria-label="Night of" autocomplete="off"></h2>
       <canvas id="altChart" aria-label="Altitude of target through the night"></canvas>
       <div class="altsum" id="altSum"></div>
       <div class="satbox">
@@ -564,6 +571,11 @@
       </details>
     </section>
 
+
+    <section data-tab="sky" class="card" id="siteCard" hidden>
+      <h2>At your site now <span class="note" id="siteAge" style="text-transform:none;letter-spacing:0"></span> <button class="icon ghost" id="siteReload" title="Refresh">↻</button></h2>
+      <div id="siteNow" class="note"></div>
+    </section>
 
     <section data-tab="sky" class="card">
       <h2><span>Conditions <span class="note" id="skyWhen" style="text-transform:none;letter-spacing:0"></span></span> <button class="icon ghost" id="wxReload" title="Refresh forecast">↻</button></h2>
@@ -647,6 +659,11 @@
     <section data-tab="gear" class="card" id="syncCard">
       <h2>Sync across devices <span class="note" id="syncState" style="text-transform:none;letter-spacing:0"></span></h2>
       <div id="syncBody" class="note"></div>
+    </section>
+
+    <section data-tab="gear" class="card" id="siteFeedCard">
+      <h2>Site sensors <span class="note" style="text-transform:none;letter-spacing:0">· live readings from your dew controller</span></h2>
+      <div id="siteFeedBody" class="note"></div>
     </section>
 
     <section data-tab="gear" class="card" id="opticsCard">
@@ -854,7 +871,7 @@ function saveStore() {
   try {
     const txt = JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay, camSides: state.camSides, horizons: state.horizons, places: state.places, wish: state.wish,
+      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay, camSides: state.camSides, horizons: state.horizons, places: state.places, wish: state.wish, siteFeed: state.siteFeed,
     });
     localStorage.setItem(KEY, txt);
     if (txt !== lastSaved && typeof syncEdited === 'function') syncEdited();   // a real change: sync it
@@ -877,7 +894,8 @@ const state = {
   subLen: saved.subLen || 300,
   galOverlay: saved.galOverlay ?? true,
   places: saved.places || null,
-  wish: saved.wish || [],   // wish list: [{key, label, t, size, center, rots, added}]   // saved observing sites [{name, lat, lon, tz}]
+  wish: saved.wish || [],
+  siteFeed: saved.siteFeed || null,   // live site sensors: {id, key}   // wish list: [{key, label, t, size, center, rots, added}]   // saved observing sites [{name, lat, lon, tz}]
   horizons: saved.horizons || [],   // [{lat, lon, name, pts: [[az, alt], …]}] trees/buildings per observing site
   camSides: saved.camSides || {},   // per camera id: {port, mirror, rowOrder, screws} — which way the camera body sits on the optics-check plot
   windBias: null,
@@ -2025,6 +2043,79 @@ $('#eventsList').addEventListener('click', (e) => {   // tap an event: plan that
   const n = e.target.closest('[data-night]')?.dataset.night; if (!n) return;
   $('#night').value = n; $('#night').dispatchEvent(new Event('change')); requestAnimationFrame(() => $('#verdictCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
 });
+/* ---------- Live site sensors (CheapoDC etc. → worker /api/site) ---------- */
+let siteData = null, siteTimer = null, siteSeq = 0;
+function spark(hist, key, color, key2, color2) {   // tiny line chart of the last hours
+  const pts = hist.filter((r) => Number.isFinite(r[key])); if (pts.length < 2) return '';
+  const vals = [...pts.map((r) => r[key]), ...(key2 ? hist.filter((r) => Number.isFinite(r[key2])).map((r) => r[key2]) : [])];
+  const lo = Math.min(...vals), hi = Math.max(...vals), t0 = pts[0].ts, t1 = pts[pts.length - 1].ts, W = 200, Hh = 26;
+  const line = (k) => hist.filter((r) => Number.isFinite(r[k])).map((r) => `${((r.ts - t0) / Math.max(1, t1 - t0) * W).toFixed(1)},${(Hh - 2 - (r[k] - lo) / Math.max(0.01, hi - lo) * (Hh - 4)).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none"><polyline fill="none" stroke="${color}" stroke-width="1.5" points="${line(key)}"/>${key2 ? `<polyline fill="none" stroke="${color2}" stroke-width="1.2" stroke-dasharray="3 2" points="${line(key2)}"/>` : ''}</svg>`;
+}
+async function loadSite() {
+  const f = state.siteFeed, card = $('#siteCard'); card.hidden = !f; if (!f) return;
+  const seq = ++siteSeq;
+  try {
+    const r = await fetch(`/api/site/${f.id}?h=12`, { cache: 'no-store' }); if (!r.ok) throw new Error(r.status);
+    const d = await r.json(); if (seq !== siteSeq) return;
+    siteData = d; renderSite();
+  } catch { if (seq === siteSeq) $('#siteAge').textContent = '· could not reach the feed'; }
+}
+function renderSite() {
+  const d = siteData, box = $('#siteNow'); if (!box || !d) return;
+  const L = d.last, H = d.hist || [];
+  if (!L) { $('#siteAge').textContent = ''; box.innerHTML = 'No readings yet. Once the CheapoDC is on the hotspot with the feed added to its firmware (Gear → Site sensors), readings appear here every couple of minutes.'; return; }
+  const age = (Date.now() - L.ts) / 60e3;
+  $('#siteAge').innerHTML = age < 10 ? `· ${age < 1 ? 'just now' : Math.round(age) + ' min ago'}` : `· <span class="tag ${age < 60 ? 'warn' : 'bad'}">last reading ${age < 120 ? Math.round(age) + ' min' : (age / 60).toFixed(1) + ' h'} ago</span>`;
+  const f1 = (v, u, d = 1) => (Number.isFinite(v) ? `${v.toFixed(d)}${u}` : '—');
+  const cells = [];
+  if (Number.isFinite(L.t)) cells.push(`<div>Temperature<div class="sv">${f1(L.t, ' °C')}</div><span class="note">dew point ${f1(L.dp, ' °C')} (dashed)</span>${spark(H, 't', '#6ea8ff', 'dp', '#9aa6bb')}</div>`);
+  if (Number.isFinite(L.t) && Number.isFinite(L.dp)) {
+    const gap = L.t - L.dp, cls = gap <= 2 ? 'bad' : gap <= 4 ? 'warn' : 'good';
+    cells.push(`<div>Dew gap<div class="sv"><span class="tag ${cls}">${gap.toFixed(1)} °C</span></div><span class="note">${gap <= 2 ? 'dew forming: heaters on' : gap <= 4 ? 'getting close' : 'dry'}</span>${spark(H.map((r) => ({ ...r, g: Number.isFinite(r.t) && Number.isFinite(r.dp) ? r.t - r.dp : NaN })), 'g', '#e3a63b')}</div>`);
+  }
+  if (Number.isFinite(L.rh)) cells.push(`<div>Humidity<div class="sv">${f1(L.rh, ' %', 0)}</div>${spark(H, 'rh', '#3fb950')}</div>`);
+  if (Number.isFinite(L.out)) cells.push(`<div>Heater power<div class="sv">${f1(L.out, ' %', 0)}</div>${Number.isFinite(L.sp) ? `<span class="note">set point ${f1(L.sp, ' °C')}</span>` : ''}${spark(H, 'out', '#e5534b')}</div>`);
+  if (Number.isFinite(L.sky)) {   // IR sky temperature: far below ambient = clear, near ambient = cloud/haze
+    const dlt = Number.isFinite(L.t) ? L.sky - L.t : NaN;
+    const word = !Number.isFinite(dlt) ? '' : dlt < -18 ? '<span class="tag good">clear</span>' : dlt < -10 ? '<span class="tag warn">some haze or thin cloud</span>' : '<span class="tag bad">cloudy</span>';
+    cells.push(`<div>Sky temperature<div class="sv">${f1(L.sky, ' °C')}</div><span class="note">${Number.isFinite(dlt) ? `${dlt.toFixed(1)} °C vs air ` : ''}${word}</span>${spark(H, 'sky', '#b392f0')}</div>`);
+  }
+  if (Number.isFinite(L.wind)) cells.push(`<div>Wind<div class="sv">${f1(L.wind, ' km/h', 0)}</div>${Number.isFinite(L.gust) ? `<span class="note">gusts ${f1(L.gust, ' km/h', 0)}</span>` : ''}${spark(H, 'wind', '#6ea8ff', 'gust', '#e5534b')}</div>`);
+  box.innerHTML = `<div class="sitegrid">${cells.join('')}</div><div class="note" style="margin-top:6px">${L.dev ? esc(L.dev) + ' · ' : ''}last 12 h${Number.isFinite(L.rssi) ? ` · Wi-Fi ${L.rssi} dBm` : ''}</div>`;
+}
+function siteFeedRender() {
+  const box = $('#siteFeedBody'), f = state.siteFeed; if (!box) return;
+  if (!f) {
+    box.innerHTML = `Send live readings from your CheapoDC (temperature, humidity, dew point, heater power, and your sky sensor) to the Sky tab, from the remote site over the phone hotspot.
+      <div class="row" style="margin-top:8px"><button type="button" class="icon" id="siteCreate">Create site feed</button></div>`;
+    return;
+  }
+  box.innerHTML = `Feed is set up. Put these two values into <code>CDCSiteFeed.h</code> in the CheapoDC firmware:
+    <div style="margin-top:6px">SITEFEED_ID <code>${esc(f.id)}</code><br>SITEFEED_KEY <code>${esc(f.key)}</code></div>
+    <div class="row" style="margin-top:8px"><button type="button" class="icon ghost" id="siteCopy">Copy both lines</button>
+      <button type="button" class="icon ghost" id="siteDelete">Delete feed</button></div>
+    <div class="note" id="siteCopyOut"></div>
+    <div class="note" style="margin-top:6px">The key lets a device write readings; keep it out of public code. The feed travels with your synced settings, so all your devices show it.</div>`;
+}
+document.addEventListener('click', async (e) => {
+  const id = e.target.id;
+  if (id === 'siteCreate') {
+    e.target.disabled = true;
+    try { const r = await fetch('/api/site', { method: 'POST' }); if (!r.ok) throw new Error(r.status); state.siteFeed = await r.json(); saveStore(); siteFeedRender(); loadSite(); track('site/create'); }
+    catch { e.target.disabled = false; $('#siteFeedBody').insertAdjacentHTML('beforeend', '<div class="note">Could not create the feed (works on fovplanner.com once worker.js is deployed).</div>'); }
+  } else if (id === 'siteCopy') {
+    const t = `#define SITEFEED_ID        "${state.siteFeed.id}"\n#define SITEFEED_KEY       "${state.siteFeed.key}"`;
+    try { await navigator.clipboard.writeText(t); $('#siteCopyOut').textContent = 'Copied.'; } catch { $('#siteCopyOut').textContent = t; }
+  } else if (id === 'siteDelete') {
+    if (!confirm('Delete the site feed and its readings? The CheapoDC will stop being able to send.')) return;
+    try { await fetch(`/api/site/${state.siteFeed.id}`, { method: 'DELETE', headers: { 'x-site-key': state.siteFeed.key } }); } catch {}
+    state.siteFeed = null; saveStore(); siteFeedRender(); loadSite();
+  } else if (id === 'siteReload') loadSite();
+});
+siteFeedRender(); loadSite();
+setInterval(() => { if (state.siteFeed && document.visibilityState === 'visible' && $('#app').dataset.tab === 'sky') loadSite(); else if (siteData) renderSite(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.siteFeed) loadSite(); });
 function renderTonight() {
   renderWish(); renderEvents();
   renderComets();
@@ -3066,7 +3157,7 @@ function renderWeek() {
   if (!weekData) return;
   const W = hourlyLookup(weekData), { lat, lon, tz } = state.site;
   const sel = $('#night').value, rows = [];
-  const today = new Date(Date.now() + tz * 3600e3).toISOString().slice(0, 10);
+  const today = tonightISO();
   let best = null;
   for (let d = 0; d < 7; d++) {
     const date = new Date(Date.parse(today + 'T12:00:00Z') + d * 864e5).toISOString().slice(0, 10);
@@ -3145,8 +3236,7 @@ function renderVerdict({ hours, val, gustAt, tz, t, cmpSpread, illum, Cm }) {
   const hhmm = (ms) => { const d = new Date(ms + tz * 3600e3); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
   const dark = hours.filter((h) => h.dark);
   const nightDate = $('#night').value;
-  $('#verdictWhen').textContent = nightDate ? '· ' + new Date(nightDate + 'T12:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) : '';
-  $('#skyWhen').textContent = nightDate ? `night of ${new Date(nightDate + 'T12:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })} (change under Tonight → Visibility)` : '';
+  nightChip();
   if (!dark.length) { box.innerHTML = 'No astronomical darkness this night at this place.'; renderGo({ go: 'no', text: 'No astronomical darkness tonight.' }); return; }
   if (dark.every((h) => val('cloud_cover', h.ms) == null)) { box.innerHTML = '<span class="note">No forecast for this date yet — forecasts reach about 2 weeks ahead.</span>'; renderGo(null); return; }
   const minAlt = state.tn.minAlt || 30, tName = t ? esc(normId(t.mainId || t.name)) : '';
@@ -3514,10 +3604,11 @@ function renderMoon() {
   const full = nextPhaseDays(mid, 180), nw = nextPhaseDays(mid, 0);
   const days = (d) => (d < 1 ? 'tonight' : `in ${Math.round(d)} day${Math.round(d) === 1 ? '' : 's'}`);
   $('#moonIcon').innerHTML = moonSvg(ph.illum, ph.waxing, 38, south);
-  $('#moonText').innerHTML = `<b>${ph.name}</b> · ${Math.round(ph.illum * 100)}% lit${events.length ? ' · ' + events.map(([w, ms]) => `${w} ${hhmm(ms)}`).join(' · ') : ''}<br>
+  const sel0 = $('#night').value, onDay = sel0 && sel0 !== tonightISO() ? `On ${new Date(sel0 + 'T12:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })}: ` : '';
+  $('#moonText').innerHTML = `${onDay}<b>${ph.name}</b> · ${Math.round(ph.illum * 100)}% lit${events.length ? ' · ' + events.map(([w, ms]) => `${w} ${hhmm(ms)}`).join(' · ') : ''}<br>
     <span class="note">Full Moon ${full != null ? days(full) : '—'} · New Moon ${nw != null ? days(nw) : '—'}</span>`;
   // two-week strip starting today; tap to choose the night
-  const today = new Date(Date.now() + tz * 3600e3).toISOString().slice(0, 10);
+  const today = tonightISO();
   const sel = $('#night').value;
   let html = '';
   for (let i = 0; i < 15; i++) {
@@ -4790,8 +4881,23 @@ for (const k of ['lat', 'lon', 'tz']) {
   $('#' + k).value = state.site[k];
   $('#' + k).addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (isFinite(v)) { state.site[k] = v; if (k !== 'tz') state.site.name = 'Custom location'; siteChanged(true); } });
 }
-{ const now = new Date(Date.now() + state.site.tz * 3600e3); $('#night').value = now.toISOString().slice(0, 10); }
-$('#night').addEventListener('change', () => { drawAltChart(); loadWeather(); scheduleTonight(); renderMoon(); renderRigStats(); });
+// "Tonight": the evening's date, so in the small hours it is still last evening's night
+function tonightISO() { return new Date(Date.now() + state.site.tz * 3600e3 - 8 * 3600e3).toISOString().slice(0, 10); }
+$('#night').value = tonightISO();
+// browsers restore form fields on reload, which would bring back a night chosen earlier: always start on tonight
+window.addEventListener('pageshow', () => { if ($('#night').value !== tonightISO()) { $('#night').value = tonightISO(); $('#night').dispatchEvent(new Event('change')); } });
+// make a night other than tonight obvious, with a way back
+function nightChip() {
+  const d = $('#night').value, other = d && d !== tonightISO();
+  const label = d ? new Date(d + 'T12:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }) : '';
+  for (const id of ['#skyWhen', '#verdictWhen']) {
+    const el = $(id); if (!el) continue;
+    el.innerHTML = other ? `· <span class="tag warn">planning ${esc(label)}</span> <button type="button" class="icon ghost nightback" title="Show tonight again">↩ Tonight</button>` : '· tonight';
+  }
+}
+document.addEventListener('click', (e) => { if (e.target.closest('.nightback')) { $('#night').value = tonightISO(); $('#night').dispatchEvent(new Event('change')); } });
+$('#night').addEventListener('change', () => { drawAltChart(); loadWeather(); scheduleTonight(); renderMoon(); renderRigStats(); nightChip(); });
+nightChip();
 $('#wxReload').addEventListener('click', () => { loadObs(true); loadWeek(true); loadWeather(); if ($('#t7').open) load7Timer(); });
 function load7Timer() {
   const { lat, lon } = state.site;
@@ -4814,7 +4920,7 @@ $('#addCam').addEventListener('click', () => $('#camTbl tbody').insertAdjacentHT
 $('#eqDlg').addEventListener('click', (e) => { if (e.target.matches('[data-del]')) e.target.closest('tr').remove(); });
 
 /* ---------- Backup: export / import ---------- */
-const BACKUP_KEYS = ['scopes', 'cams', 'filters', 'rigs', 'survey', 'boost', 'tn', 'seeing', 'useFcSeeing', 'defaultSite', 'follow', 'wxModel', 'dust', 'galOverlay', 'places', 'horizons', 'camSides', 'subLen', 'wish'];
+const BACKUP_KEYS = ['scopes', 'cams', 'filters', 'rigs', 'survey', 'boost', 'tn', 'seeing', 'useFcSeeing', 'defaultSite', 'follow', 'wxModel', 'dust', 'galOverlay', 'places', 'horizons', 'camSides', 'subLen', 'wish', 'siteFeed'];
 const blobToDataUrl = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); });
 const dataUrlToBlob = async (u) => (await fetch(u)).blob();
 function downloadFile(name, text) {

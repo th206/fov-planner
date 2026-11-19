@@ -19,7 +19,7 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 
 ## Upcoming sky events
 
-- Tonight tab: the next four months of major meteor showers (IMO working list, peaks from solar longitude, ±a few hours) and New/Full Moons. Each shower shows the peak time, the best hour from your site with the radiant's height, the Moon, and a rough rate you might see (ZHR reduced for radiant height, your Bortle class and moonlight). Tap an event to plan that night
+- Tonight tab: the next four months of major meteor showers (IMO working list, peaks from solar longitude, ±a few hours) and New/Full Moons. Each shower shows the peak time, the best hour from your site with the radiant's height, the Moon, and a rough rate you might see (ZHR reduced for radiant height, your Bortle class and moonlight). Tap an event to plan that night; while another night is chosen, Tonight and Conditions show *planning …* with a ↩ Tonight button, and the page always starts on tonight
 
 ## Comets
 
@@ -149,6 +149,12 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - Pick a **sync name** (e.g. `orion-hunter`) and a **6-digit PIN**, and press *Connect*. A new name saves this device's setup under it; on every other computer, phone or browser, enter the same name and PIN once and that device loads your setup. From then on they share one setup: equipment, rigs, filters, places, horizons, wish list with notes, camera sides, optics history and settings
 - Changes are uploaded a few seconds after you make them; a device picks up newer changes when it opens or comes back to the foreground (an open page offers *Load it* rather than reloading under you). If two devices change things at nearly the same time, the later save wins
 - From name + PIN the browser derives a proof (sent to the server) and an encryption key (never sent): settings are encrypted with AES-GCM before they leave the device and stored in the site's R2 bucket under a hash of the name (`sync/…`, worker.js `/api/sync/`), so the server can't read them. After 5 wrong PINs a name is locked for 15 minutes, then for longer each time. Wrong PIN and "name taken" look the same from outside. Names must be 5+ characters, and common ones (including the example) are refused; before a device loads a synced setup it shows what is in it (telescopes, cameras, rigs, wish list, last saved), so a stranger who picked the same name and PIN would see it isn't theirs. Private images are not synced (use Export with images)
+
+## Live site sensors
+
+- Gear → *Site sensors* → *Create site feed* gives a feed id and a device key. A device at the site (the CheapoDC dew controller, later the anemometer) POSTs a small JSON reading every minute or two to `/api/site/<id>` with the key in an `x-site-key` header; worker.js keeps the latest values and 48 hours of history in R2 (`site/…`), storing only a hash of the key
+- Sky → *At your site now* shows temperature, dew point, dew gap (warns ≤ 4 °C, red ≤ 2 °C), humidity, heater power, IR sky temperature (sky minus air: below −18 °C clear, −10…−18 haze/thin cloud, above −10 cloudy) and wind, with 12-hour sparklines; it refreshes every minute while open
+- Accepted fields: t, rh, dp, out, sp, sky, skyd, wind, gust, wdir, p, lux, sqm, v, rssi, plus a short `dev` name. Firmware add-on for CheapoDC 2.3.x: `cheapodc-sitefeed/CDCSiteFeed.h` with install steps in `SITEFEED-INSTALL.md`
 
 ## Your data
 
