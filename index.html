@@ -104,6 +104,9 @@
   #wishNoteT { margin: 4px 0 6px; }
   #syncBody code { font-size: 14px; letter-spacing: .05em; color: var(--text); background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 5px; user-select: all; }
   #syncBody .row { margin-top: 8px; }
+  .evrow { padding: 6px 0; border-top: 1px solid var(--line); cursor: pointer; }
+  .evrow:first-child { border-top: none; }
+  .evrow:hover b { color: var(--accent); }
   .optplot { width: 100%; height: auto; border-radius: 8px; margin: 8px 0 4px; border: 1px solid var(--line); }
   .satbox { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
   .satbox .row { gap: 6px; align-items: center; } .satbox select { max-width: 200px; }
@@ -535,6 +538,16 @@
       </details>
       <details class="info"><summary>ⓘ How this list works</summary><div class="wxnote">For the night (date under Visibility) and the place set in Sky. Hours count astronomical darkness with the target above your minimum altitude.
         Pick a target from the list to load it; for mosaics the rig's grid and rotation are set for you. Catalog: OpenNGC (CC-BY-SA 4.0) and Sharpless (1959).</div></details>
+    </section>
+
+    <section data-tab="tonight" class="card" id="eventsCard">
+      <h2>Upcoming sky events <span class="note" id="eventsFor" style="text-transform:none;letter-spacing:0"></span></h2>
+      <div id="eventsList" class="note"></div>
+      <details class="info"><summary>ⓘ How meteor rates are estimated</summary><div class="wxnote">Peak times are worked out from the Sun's position (solar longitude) for each shower in the
+        International Meteor Organization's working list; real peaks can come a few hours early or late, and some showers have outbursts in particular years.
+        The rate you might see is the shower's ZHR (the rate for one observer under a perfect sky with the radiant overhead) reduced for the radiant's height,
+        your sky's Bortle class and the Moon. Meteors appear all over the sky, not just at the radiant, so look about 45° away from it; a wide lens pointed there
+        catches the most trails.</div></details>
     </section>
 
     <section data-tab="tonight" class="card" id="cometCard" hidden>
@@ -1934,8 +1947,85 @@ $('#wishList').addEventListener('click', (e) => {
     state.wish = state.wish.filter((w) => w.key !== k); saveStore(); renderWish(); wishMark(); return; }
   wishLoad(k, act === 'frame');
 });
+/* ---------- Upcoming sky events: meteor showers (IMO working list) and Moon phases ---------- */
+// [code, name, peak solar longitude (J2000 °), ZHR, radiant RA°, Dec°, active from, active to (MM-DD), parent, note]
+const SHOWERS = [
+  ['QUA', 'Quadrantids', 283.15, 80, 230, 49, '12-28', '01-12', '2003 EH1', 'short, sharp peak of a few hours'],
+  ['LYR', 'Lyrids', 32.32, 18, 271, 34, '04-14', '04-30', 'comet Thatcher', ''],
+  ['ETA', 'Eta Aquariids', 45.5, 50, 338, -1, '04-19', '05-28', 'comet Halley', 'best before dawn; favours the tropics and south'],
+  ['SDA', 'Southern Delta Aquariids', 127, 25, 340, -16, '07-12', '08-23', '96P/Machholz', ''],
+  ['CAP', 'Alpha Capricornids', 127, 5, 307, -10, '07-03', '08-15', '169P/NEAT', 'few but bright, slow fireballs'],
+  ['PER', 'Perseids', 140.0, 100, 48, 58, '07-17', '08-24', 'comet Swift–Tuttle', ''],
+  ['DRA', 'Draconids', 195.4, 10, 262, 54, '10-06', '10-10', 'comet Giacobini–Zinner', 'usually weak, sometimes outbursts; best in the evening'],
+  ['STA', 'Southern Taurids', 197, 5, 32, 9, '09-10', '11-20', 'comet Encke', 'slow fireballs'],
+  ['ORI', 'Orionids', 208, 20, 95, 16, '10-02', '11-07', 'comet Halley', ''],
+  ['NTA', 'Northern Taurids', 230, 5, 58, 22, '10-20', '12-10', 'comet Encke', 'slow fireballs'],
+  ['LEO', 'Leonids', 235.27, 15, 152, 22, '11-06', '11-30', 'comet Tempel–Tuttle', 'fast meteors'],
+  ['GEM', 'Geminids', 262.2, 150, 112, 33, '12-04', '12-20', 'asteroid Phaethon', 'the year\'s richest shower; good from mid-evening'],
+  ['URS', 'Ursids', 270.7, 10, 217, 76, '12-17', '12-26', 'comet Tuttle', ''],
+];
+function sunLonTime(lambda, fromMs) {   // first moment after fromMs when the Sun reaches this J2000 longitude
+  lambda += 1.3972 * (fromMs - Date.UTC(2000, 0, 1, 12)) / (36525 * 864e5);   // J2000 → equinox of date (precession)
+  let d = ((lambda - sunLon(fromMs) + 360) % 360) / 0.9856, t = fromMs + d * 864e5;
+  for (let k = 0; k < 4; k++) { const e = ((lambda - sunLon(t) + 540) % 360) - 180; t += e / 0.9856 * 864e5; }
+  return t;
+}
+const LM_BORTLE = [7.6, 7.6, 7.1, 6.6, 6.3, 5.9, 5.6, 5.1, 4.6, 4.1];   // naked-eye limiting magnitude by Bortle class
+function showerAt(sh, peakMs) {   // best hour around the peak night: radiant height, dark, Moon → rate a person might see
+  const { lat, lon, tz } = state.site, local = new Date(peakMs + tz * 3600e3);
+  const nightDate = new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate() - (local.getUTCHours() < 12 ? 1 : 0)));
+  const t0 = Date.UTC(nightDate.getUTCFullYear(), nightDate.getUTCMonth(), nightDate.getUTCDate(), 16) - tz * 3600e3;
+  let best = null;
+  for (let ms = t0; ms < t0 + 16 * 3600e3; ms += 15 * 60e3) {
+    const [sr, sd] = sunRaDec(ms); if (altAz(sr, sd, ms, lat, lon) > -12) continue;
+    const h = altAz(sh[4], sh[5], ms, lat, lon); if (h < 10) continue;
+    const [mr, md] = moonRaDec(ms), mAlt = altAz(mr, md, ms, lat, lon), ill = moonPhase(ms).illum;
+    const lm = LM_BORTLE[Math.min(9, Math.max(1, state.sky?.bortle || 4))] - (mAlt > 0 ? 1.6 * ill : 0);   // moonlight brightens the sky
+    const zhrNow = sh[3] * Math.pow(0.2, Math.abs(ms - peakMs) / 864e5);   // most showers fall to ~1/5 a day from the peak
+    const rate = zhrNow * Math.sin(h * D2R) * Math.pow(2.5, Math.min(0, lm - 6.5));
+    if (!best || rate > best.rate) best = { ms, rate, h, mUp: mAlt > 0, ill };
+  }
+  return { nightDate, best };
+}
+function skyEvents() {
+  const now = Date.now(), horizon = now + 120 * 864e5, out = [];
+  for (const sh of SHOWERS) {
+    let peak = sunLonTime(sh[2], now - 3 * 864e5);
+    if (peak > horizon) continue;
+    const a = showerAt(sh, peak);
+    out.push({ kind: 'shower', ms: peak, sh, ...a });
+  }
+  const mid = now;   // next new and full Moons
+  for (const [target, name] of [[0, 'New Moon'], [180, 'Full Moon']]) {
+    const d = nextPhaseDays(mid, target); if (d != null) out.push({ kind: 'moon', ms: mid + d * 864e5, name });
+  }
+  return out.sort((a, b) => a.ms - b.ms).slice(0, 8);
+}
+function renderEvents() {
+  const box = $('#eventsList'); if (!box) return;
+  const { tz } = state.site, now = Date.now();
+  const day = (ms) => new Date(ms + tz * 3600e3).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const isoNight = (d) => d.toISOString().slice(0, 10);
+  $('#eventsFor').textContent = `· next 4 months · ${state.site.name || ''}`;
+  box.innerHTML = skyEvents().map((e) => {
+    if (e.kind === 'moon') {
+      const nd = new Date(e.ms + tz * 3600e3); const night = isoNight(new Date(Date.UTC(nd.getUTCFullYear(), nd.getUTCMonth(), nd.getUTCDate())));
+      return `<div class="evrow" data-night="${night}"><b>${e.name}</b> · ${day(e.ms)}${e.name === 'New Moon' ? ' <span class="note">— the darkest nights are the few around it</span>' : ' <span class="note">— bright sky; narrowband nights</span>'}</div>`;
+    }
+    const [, name, , zhr, , , from, to, parent, note] = e.sh, b = e.best;
+    const inDays = (e.ms - now) / 864e5, active = inDays < 0 ? 'active now, peak passed' : inDays < 1.5 ? 'peak tonight or next night' : '';
+    const rate = b ? Math.round(b.rate) : 0, cls = !b || rate < 3 ? 'bad' : rate < 15 ? 'warn' : 'good';
+    const seen = !b ? 'radiant too low from here' : `~${rate}/h at best (${hhmms(b.ms)}, radiant ${Math.round(b.h)}° up${b.mUp ? `, Moon ${Math.round(b.ill * 100)}% up` : ', no Moon'})`;
+    return `<div class="evrow" data-night="${isoNight(e.nightDate)}"><b>${name}</b> peak ${day(e.ms)} ${hhmms(e.ms)}${active ? ` <span class="tag good">${active}</span>` : ''}
+      <br><span class="tag ${cls}">${seen}</span> <span class="note">ZHR ${zhr} · active ${from.replace('-', '/')}–${to.replace('-', '/')} · from ${parent}${note ? ' · ' + note : ''}</span></div>`;
+  }).join('') || 'Nothing in the next four months.';
+}
+$('#eventsList').addEventListener('click', (e) => {   // tap an event: plan that night
+  const n = e.target.closest('[data-night]')?.dataset.night; if (!n) return;
+  $('#night').value = n; $('#night').dispatchEvent(new Event('change')); requestAnimationFrame(() => $('#verdictCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+});
 function renderTonight() {
-  renderWish();
+  renderWish(); renderEvents();
   renderComets();
   if (!$('#tnList')) return;
   tnCache = computeTonight();

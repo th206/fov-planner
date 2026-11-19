@@ -17,6 +17,10 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 - One line per rig with the best window of the night, e.g. "good 22:00–03:00 (5 h) · clear · seeing 1.4″ · wind OK", or the main reason there is none (cloud, rain, wind, seeing, or the target too low)
 - Uses the loaded target's altitude, cloud, rain, the worst-case gusts against each telescope's wind limit, and the seeing estimate
 
+## Upcoming sky events
+
+- Tonight tab: the next four months of major meteor showers (IMO working list, peaks from solar longitude, ±a few hours) and New/Full Moons. Each shower shows the peak time, the best hour from your site with the radiant's height, the Moon, and a rough rate you might see (ZHR reduced for radiant height, your Bortle class and moonlight). Tap an event to plan that night
+
 ## Comets
 
 - Comets brighter than about magnitude 12 that are up during darkness, from the Minor Planet Center's current orbits (refreshed daily); positions are computed in the browser (checked against Skyfield/DE421 to better than 0.1′)
