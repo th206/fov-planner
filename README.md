@@ -152,6 +152,8 @@ Plan astrophotography with **several telescope + camera combinations overlaid on
 
 ## Your data
 
+- Contact: contact@fovplanner.com (iCloud custom domain). On the page the address is assembled only when the Contact link is tapped, so it isn't in the HTML for spam robots
+
 - Equipment, rigs, filters, settings, default location and images are saved **only in your own browser** — nothing is uploaded, and other users never see or change your setup
 - One address: settings live per web address, so `www.fovplanner.com` and the old github.io copy hand their settings to `fovplanner.com` once (merged if both have a setup) and then redirect. Private images stay at the old address until exported (`?stay` opens it)
 - Export / Import a backup file (optionally with images) to keep a copy, move to another device, or share your setup with friends

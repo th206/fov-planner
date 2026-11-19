@@ -414,6 +414,7 @@
       <details class="about"><summary>About</summary><div class="note">
         <p><b>FOV Planner</b> is a free astrophotography planning tool. Search any galaxy, nebula, cluster, supernova remnant or dark nebula (Messier, NGC, IC, Sharpless, Lynds LDN/LBN, Barnard) and overlay the field of view of every telescope and camera you own at the same time, with rotation, reducers and mosaics.</p>
         <p>It lists tonight's best deep-sky targets for your own gear, hides targets that are too small for your rigs, plans mosaics for large ones and suggests narrowband, dual-band or broadband filters. Conditions include a 7-night cloud outlook, a seeing estimate in arcseconds, wind against your telescope's limit, dew, transparency, the Moon and your Bortle class from the light-pollution atlas. Comets, a dust map for dark nebulae and a gallery of plate-solved images complete it.</p>
+        <p>Questions, ideas or a problem? <a href="#" class="contactlink" data-u="contact" data-d="fovplanner.com">Contact us</a>.</p>
       </div></details>
     </div>
     <nav id="tabs" role="tablist" aria-label="Sections">
@@ -725,7 +726,7 @@
         <label class="note"><input type="checkbox" id="exportImgs"> include My images (larger file)</label>
         <div class="note" id="backupMsg"></div>
       </div>
-      <div class="note" style="margin-top:8px">Imagery &amp; name lookup: CDS Aladin Lite and SIMBAD. Everything is saved in this browser; use Export to back it up or move it to another device. Anonymous usage counts (pages and features used, no cookies or personal data) via GoatCounter.</div>
+      <div class="note" style="margin-top:8px">Imagery &amp; name lookup: CDS Aladin Lite and SIMBAD. Everything is saved in this browser; use Export to back it up or move it to another device. Anonymous usage counts (pages and features used, no cookies or personal data) via GoatCounter. Questions or ideas: <a href="#" class="contactlink" data-u="contact" data-d="fovplanner.com">contact us</a>.</div>
     </section>
   </aside>
 
@@ -5057,6 +5058,14 @@ if (syncOk) {
   else setTimeout(() => syncCheck(true), 400);
 } else { syncReady = true; renderSync(); }
 
+// Contact links: the address is put together only when tapped, so it is not sitting in the page for spam robots
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('.contactlink'); if (!a) return;
+  e.preventDefault();
+  const addr = `${a.dataset.u}@${a.dataset.d}`;
+  location.href = `mailto:${addr}?subject=${encodeURIComponent('FOV Planner')}`;
+  a.textContent = addr; a.classList.remove('contactlink'); a.href = `mailto:${addr}`; track('contact');
+});
 // Ask the browser not to clear this site's storage when space runs low (and Safari not to expire it)
 try { navigator.storage?.persist?.(); } catch {}
 
