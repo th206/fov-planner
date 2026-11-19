@@ -18,6 +18,7 @@ export default {
       if (p.startsWith('/t/')) return await serveTemp(env, p.slice(3));
       if (p.startsWith('/hips/')) return await hipsTile(req, p);
       if (p.startsWith('/api/sync/')) return await syncApi(req, env, p);
+      if (p === '/api/site' || p.startsWith('/api/site/')) return await siteApi(req, env, p, url);
     } catch (e) {
       return json({ error: e.message || String(e) }, e.status || 500);
     }
@@ -103,6 +104,57 @@ async function syncApi(req, env, p) {
     return json({ ok: true, ts: d.ts }, 200, H);
   }
   if (req.method === 'DELETE') { await env.GALLERY.delete([dataKey, authKey]); return json({ ok: true }, 200, H); }
+  fail('Method not allowed.', 405);
+}
+
+// Live site sensors (CheapoDC dew controller, anemometer…). The planner creates a feed: a random id (which also lets you
+// read it) and a device key (which lets a device write to it; only its hash is kept here). A device POSTs a small JSON
+// reading every minute or two; the planner reads the latest and the last 48 hours.
+const SITE_FIELDS = ['t', 'rh', 'dp', 'out', 'sky', 'skyd', 'wind', 'gust', 'wdir', 'sp', 'p', 'lux', 'sqm', 'v', 'rssi'];
+const SITE_KEEP = 48 * 3600e3;
+async function siteApi(req, env, p, url) {
+  const H = { 'cache-control': 'no-store', 'access-control-allow-origin': '*' };
+  const sha = async (t) => hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('fovplanner-site:' + t)));
+  if (p === '/api/site' && req.method === 'POST') {   // create a feed
+    const rnd = (n) => hex(crypto.getRandomValues(new Uint8Array(n)));
+    const id = rnd(12), key = rnd(16);
+    await env.GALLERY.put(`site/${id}.auth.json`, JSON.stringify({ key: await sha(key), created: Date.now() }), { httpMetadata: { contentType: 'application/json' } });
+    return json({ id, key }, 200, H);
+  }
+  const id = p.slice('/api/site/'.length);
+  if (!/^[0-9a-f]{24}$/.test(id)) fail('Unknown feed.', 404);
+  const ao = await env.GALLERY.get(`site/${id}.auth.json`); if (!ao) fail('Unknown feed.', 404);
+  const dataKey = `site/${id}.json`;
+  if (req.method === 'GET') {
+    const o = await env.GALLERY.get(dataKey);
+    if (!o) return json({ last: null, hist: [] }, 200, H);
+    const d = await o.json(), since = Date.now() - Math.min(48, Math.max(1, +url.searchParams.get('h') || 12)) * 3600e3;
+    return json({ last: d.last, hist: (d.hist || []).filter((r) => r.ts >= since) }, 200, H);
+  }
+  if (req.method === 'POST') {   // a device reading
+    const auth = await ao.json();
+    if ((await sha(req.headers.get('x-site-key') || '')) !== auth.key) fail('Wrong device key.', 403);
+    const body = await req.text(); if (body.length > 4096) fail('Reading too large.', 413);
+    let r; try { r = JSON.parse(body); } catch { fail('Bad reading.'); }
+    const rec = { ts: Date.now() };
+    for (const k of SITE_FIELDS) if (Number.isFinite(+r[k]) && r[k] !== null && r[k] !== '') rec[k] = Math.round(+r[k] * 100) / 100;
+    if (typeof r.dev === 'string') rec.dev = r.dev.slice(0, 24).replace(/[^\w .-]/g, '');
+    if (Object.keys(rec).length < 2) fail('No readings in that message.');
+    const o = await env.GALLERY.get(dataKey), d = o ? await o.json() : { hist: [] };
+    // several devices can share a feed: merge their latest values, keep a history point per message (thinned to 1/min)
+    d.last = { ...(d.last && Date.now() - d.last.ts < 15 * 60e3 ? d.last : {}), ...rec };
+    const h = (d.hist || []).filter((x) => x.ts >= rec.ts - SITE_KEEP);
+    const prev = h[h.length - 1];
+    if (prev && rec.ts - prev.ts < 55e3 && prev.dev === rec.dev) h[h.length - 1] = { ...prev, ...rec }; else h.push(rec);
+    d.hist = h;
+    await env.GALLERY.put(dataKey, JSON.stringify(d), { httpMetadata: { contentType: 'application/json' } });
+    return json({ ok: true }, 200, H);
+  }
+  if (req.method === 'DELETE') {
+    const auth = await ao.json();
+    if ((await sha(req.headers.get('x-site-key') || '')) !== auth.key) fail('Wrong device key.', 403);
+    await env.GALLERY.delete([dataKey, `site/${id}.auth.json`]); return json({ ok: true }, 200, H);
+  }
   fail('Method not allowed.', 405);
 }
 
