@@ -3010,9 +3010,30 @@ function drawAltChart() {
     const [m0, c0] = pts[i - 1], [m1, c1] = pts[i];
     ctx.strokeStyle = c1.ok ? '#6ea8ff' : '#6ea8ff55'; ctx.beginPath(); ctx.moveTo(X(m0), Y(c0.alt)); ctx.lineTo(X(m1), Y(c1.alt)); ctx.stroke();
   }
+  // compass direction along the curve, every 2 hours while the target is up (where to look, where to set up)
+  const DIR8 = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'], dir8 = (az) => DIR8[Math.round(az / 45) % 8];
+  ctx.font = '600 10px system-ui'; ctx.textAlign = 'center';
+  for (let h = 1; h < 16; h += 2) {
+    const ms = t0 + h * 3600e3, c = pts[Math.round(h * 3600e3 / dt)]?.[1]; if (!c || c.alt < 4) continue;
+    const x = X(ms), yy = Y(c.alt), lab = c.alt > 84 ? '↑' : dir8(c.az), up = yy > 18;
+    ctx.fillStyle = '#0b0f1acc'; const tw = ctx.measureText(lab).width + 6; ctx.fillRect(x - tw / 2, (up ? yy - 15 : yy + 4), tw, 12);
+    ctx.fillStyle = c.ok ? '#cfe0ff' : '#8e99ad'; ctx.fillText(lab, x, up ? yy - 5.5 : yy + 13.5);
+    ctx.beginPath(); ctx.arc(x, yy, 2, 0, 2 * Math.PI); ctx.fill();
+  }
+  ctx.textAlign = 'start';
+  // where it rises, culminates and sets (within this night window)
+  const above = pts.filter(([, c]) => c.alt > 0), dirTxt = (() => {
+    if (!above.length) return '';
+    const first = above[0], last = above[above.length - 1], pk = pts.reduce((a, b) => (b[1].alt > a[1].alt ? b : a));
+    const hm = (ms) => { const d2 = new Date(ms + tz * 3600e3); return `${String(d2.getUTCHours()).padStart(2, '0')}:${String(d2.getUTCMinutes()).padStart(2, '0')}`; };
+    const where = pk[1].alt > 84 ? 'almost overhead' : `in the ${({ N: 'north', S: 'south', E: 'east', W: 'west', NE: 'north-east', SE: 'south-east', SW: 'south-west', NW: 'north-west' })[dir8(pk[1].az)]}`;
+    const a = first[0] > t0 ? `rises in the <b>${dir8(first[1].az)}</b> at ${hm(first[0])}` : `starts in the <b>${dir8(first[1].az)}</b>`;
+    const b = last[0] < t0 + span ? `sets in the <b>${dir8(last[1].az)}</b> at ${hm(last[0])}` : `ends in the <b>${dir8(last[1].az)}</b>`;
+    return `<br>${(lat >= 0 ? t.dec > 90 - lat : t.dec < -90 - lat) ? 'Circumpolar: never sets · ' : ''}${a} · highest ${where} (${Math.round(pk[1].alt)}°) · ${b}`;
+  })();
   const lt = new Date(peakT + tz * 3600e3);
   setTimeout(renderSats, 0);
-  $('#altSum').innerHTML = `Highest ${peak.toFixed(0)}° at ${String(lt.getUTCHours()).padStart(2, '0')}:${String(lt.getUTCMinutes()).padStart(2, '0')} · <b style="color:var(--text)">${(good / 3600e3).toFixed(1)} h</b> above ${minA}°${hz ? ' and clear of obstructions' : ''} in astronomical darkness${lost >= 1800e3 ? ` <span class="note">(${(lost / 3600e3).toFixed(1)} h lost behind trees/buildings)</span>` : ''}`;
+  $('#altSum').innerHTML = `Highest ${peak.toFixed(0)}° at ${String(lt.getUTCHours()).padStart(2, '0')}:${String(lt.getUTCMinutes()).padStart(2, '0')} · <b style="color:var(--text)">${(good / 3600e3).toFixed(1)} h</b> above ${minA}°${hz ? ' and clear of obstructions' : ''} in astronomical darkness${lost >= 1800e3 ? ` <span class="note">(${(lost / 3600e3).toFixed(1)} h lost behind trees/buildings)</span>` : ''}${dirTxt}`;
 }
 
 /* ---------- Weather & seeing (Open-Meteo) ---------- */
