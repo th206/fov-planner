@@ -530,6 +530,8 @@
           <label class="note">to <input id="aiTo" type="time" autocomplete="off"></label>
         </div>
         <div id="aiRigs" class="airigs"></div>
+        <label class="note" style="display:flex;align-items:center;gap:6px;margin:2px 0 6px">Targets
+          <select id="aiStyle" style="flex:1;min-width:0"><option value="best">Best for tonight</option><option value="gems">Hidden gems: striking, rarely photographed</option><option value="popular">Showpieces</option></select></label>
         <textarea id="aiAsk" class="wishnote" rows="2" maxlength="400" placeholder="Anything else? e.g. “something I haven't shot before”, “I have an L-eNhance”, “must pack up by 2”"></textarea>
         <div class="row" style="margin-top:6px"><button type="button" class="icon" id="aiGo">✦ Plan my night</button> <span id="aiMsg" class="note"></span></div>
       </div>
@@ -5274,6 +5276,11 @@ function aiWindows(ra, dec, a, b, minAlt, hz) {   // clear-of-horizon stretches 
   }
   return { win: out.filter(([x, y]) => y - x >= 20 * 60e3).map(([x, y]) => `${aiLocalTime(x)}-${aiLocalTime(y)}`), peak: Math.round(peak), peakAt: aiLocalTime(peakMs) };
 }
+// The targets most people have already shot: Messier, Caldwell and the famous named nebulae and galaxies
+const AI_FAMOUS = new Set(['NGC 7000', 'IC 5070', 'IC 1396', 'IC 1805', 'IC 1848', 'NGC 2237', 'NGC 2244', 'NGC 2238', 'NGC 2239', 'NGC 2246', 'IC 434', 'B 33', 'NGC 2024', 'NGC 6960', 'NGC 6992', 'NGC 6995', 'NGC 6979',
+  'NGC 7635', 'NGC 281', 'IC 405', 'IC 410', 'NGC 6888', 'IC 5146', 'NGC 2264', 'NGC 7293', 'NGC 253', 'NGC 891', 'NGC 4565', 'NGC 7331', 'IC 342', 'NGC 2403', 'NGC 6946', 'NGC 1499', 'IC 2118', 'NGC 1333',
+  'IC 1795', 'IC 443', 'NGC 6543', 'NGC 4631', 'NGC 5128', 'NGC 6820', 'NGC 6914', 'IC 2177', 'NGC 2359', 'NGC 3372', 'NGC 1977', 'NGC 1973', 'NGC 1975', 'NGC 1909', 'NGC 6188', 'IC 4592', 'IC 4604', 'NGC 6357', 'NGC 6334', 'IC 1340', 'NGC 3628', 'NGC 2392', 'NGC 6826', 'NGC 7662', 'NGC 6302']);
+const aiFamous = (c) => /^M \d/.test(c.id) || /Caldwell/.test(c.id + ' ' + (c.alt || '')) || AI_FAMOUS.has(c.id);
 function aiBuild() {
   const T = nightTimes(), tz = state.site.tz, hz = siteHorizon(), minAlt = state.tn.minAlt || 30;
   const from = aiParseTime($('#aiFrom').value) ?? T.darkA, to = aiParseTime($('#aiTo').value) ?? T.darkB;
@@ -5287,7 +5294,15 @@ function aiBuild() {
       camera: g.c.name, sensor: kind === 'mono' ? 'mono' : 'colour', pixel_um: g.c.px, scale_arcsec_px: +g.scale.toFixed(2), field: `${(g.w * 60).toFixed(0)}' x ${(g.h * 60).toFixed(0)}'`,
       filter: f ? `${f.name} (${(FILTER_TYPES.find(([k]) => k === f.type) || [, f.type])[1]})` : 'none set', mosaic_now: r.cols * r.rows > 1 ? `${r.cols}x${r.rows}` : null, wind_limit_kmh: windLimit(g.s) }; });
   // targets: tonight's list for these rigs (current filters), best 25
-  const keep = new Set(ids), items = (tnCache?.items || []).filter((it) => keep.has(it.best.r.id)).slice(0, 25);
+  const style = $('#aiStyle')?.value || 'best', keep = new Set(ids);
+  const all = (tnCache?.items || []).filter((it) => keep.has(it.best.r.id));
+  let items;
+  if (style === 'gems') {   // leave out the famous ones and what's already imaged; send a wider list so the AI can pick the unusual
+    const gem = (it) => it.score - (it.c.name ? 1.2 : 0) + (/^(LDN|LBN|vdB|Abell|B |Barnard|Ced|Simeis|RCW|Gum|HB|VRO)/i.test(it.c.id) ? 0.4 : 0);
+    const groups = {};   // a mix of kinds (nebulae, galaxies, planetaries, remnants, dark nebulae…), best of each first
+    for (const it of all.filter((x) => !x.done && !aiFamous(x.c)).sort((a, b) => gem(b) - gem(a))) (groups[TYPE_GROUP[it.c.t] || 'x'] ||= []).push(it);
+    items = []; for (let k = 0; items.length < 45 && Object.values(groups).some((g) => g.length > k); k++) for (const g of Object.values(groups)) if (g[k] && items.length < 45) items.push(g[k]);
+  } else items = all.slice(0, style === 'popular' ? 20 : 25);
   const letterOf = (rid) => Object.keys(aiRigIds).find((k) => aiRigIds[k] === rid);
   const targets = items.map((it) => { const { c, best } = it, w = aiWindows(c.ra, c.dec, from, to, minAlt, hz);
     return { id: c.id, name: c.name || c.alt.split(' · ')[0] || undefined, type: TYPE_NAMES[c.t] || c.t, size: c.maj === c.min ? `${c.maj}'` : `${c.maj}'x${c.min}'`, mag: c.mag ?? undefined,
@@ -5309,7 +5324,7 @@ function aiBuild() {
   const mp = moonPhase((from + to) / 2);
   const hzTxt = hz ? HZ_DIRS.map((d, i) => `${d} ${Math.round(horizonAlt(i * 45, hz))}°`).join(', ') : 'flat (none set)';
   return { data: {
-    night: $('#night').value, local_window: `${aiLocalTime(from)}-${aiLocalTime(to)}`, utc_offset: tz,
+    target_style: $('#aiStyle')?.value || 'best', night: $('#night').value, local_window: `${aiLocalTime(from)}-${aiLocalTime(to)}`, utc_offset: tz,
     site: { lat: Math.round(state.site.lat * 10) / 10, lon: Math.round(state.site.lon * 10) / 10, bortle: state.sky?.bortle || null, horizon: hzTxt, min_altitude: minAlt },
     darkness: T.darkA && T.darkB ? `${aiLocalTime(T.darkA)}-${aiLocalTime(T.darkB)}` : 'none', sunset: T.set ? aiLocalTime(T.set) : null, sunrise: T.rise ? aiLocalTime(T.rise) : null,
     moon: { illumination_pct: Math.round(mp.illum * 100), moon_free_dark: T.moonless ? `${aiLocalTime(T.moonless[0])}-${aiLocalTime(T.moonless[1])}` : 'none' },
@@ -5357,6 +5372,7 @@ function aiShow(p, rigMap, cached) {
   $('#aiOut').innerHTML = html;
 }
 $('#aiGo')?.addEventListener('click', aiRun);
+{ const el = $('#aiStyle'); if (el) { try { el.value = localStorage.getItem('mrp.aistyle') || 'best'; } catch {} el.addEventListener('change', () => { try { localStorage.setItem('mrp.aistyle', el.value); } catch {} }); } }
 $('#aiCodeBtn')?.addEventListener('click', () => { const v = $('#aiCodeIn').value.trim(); try { v ? localStorage.setItem(AI_KEY, v) : localStorage.removeItem(AI_KEY); } catch {} aiCheck(); });
 $('#aiOut')?.addEventListener('click', (e) => {
   const b = e.target.closest('[data-aiload]'); if (!b) return;
