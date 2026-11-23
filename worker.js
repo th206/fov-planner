@@ -235,7 +235,7 @@ async function planApi(req, env, p) {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_KEY, 'anthropic-version': env.ANTHROPIC_VERSION || '2023-06-01' },
     body: JSON.stringify({
-      model, max_tokens: 2000,
+      model, max_tokens: 4000,
       system: [{ type: 'text', text: PLAN_SYSTEM + (structured ? '' : '\n\nJSON schema:\n' + JSON.stringify(PLAN_SCHEMA)), cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: user }],
       ...(structured ? { output_config: { format: { type: 'json_schema', schema: PLAN_SCHEMA } } } : {}),
@@ -246,15 +246,7 @@ async function planApi(req, env, p) {
   if (r.status === 429 || r.status === 529) fail('The AI service is busy. Try again in a minute.', 503);
   if (!r.ok) fail(`The AI service answered ${r.status}.`, 502);
   const j = await r.json();
-  const text = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
-  let plan; try { plan = JSON.parse(text); } catch { const m = text.match(/\{[\s\S]*\}/); try { plan = m && JSON.parse(m[0]); } catch {} }
-  if (!plan || !Array.isArray(plan.blocks)) fail('The AI answer could not be read. Please try again.', 502);
-  // keep only what the page renders
-  const str = (x, n = 300) => (typeof x === 'string' ? x.slice(0, n) : '');
-  plan = { summary: str(plan.summary, 800), blocks: plan.blocks.slice(0, 12).map((x) => ({ rig: str(x.rig, 4), start: str(x.start, 5), end: str(x.end, 5), target: str(x.target, 60),
-    target_name: str(x.target_name, 80), filter: str(x.filter, 80), exposure: str(x.exposure, 80), framing: str(x.framing, 120), why: str(x.why, 300) })),
-    before: (plan.before || []).slice(0, 5).map((x) => str(x)), during: (plan.during || []).slice(0, 5).map((x) => str(x)), after: (plan.after || []).slice(0, 4).map((x) => str(x)) };
-  // count it
+  // count it first: the tokens are billed whether or not the answer can be used
   const us = j.usage || {}, [pin, pout] = PRICE[model] || PRICE[PLAN_MODEL];
   const inTok = (us.input_tokens || 0) + (us.cache_creation_input_tokens || 0) * 1.25, cacheTok = us.cache_read_input_tokens || 0;
   const usd = (inTok * pin + cacheTok * pin * 0.1 + (us.output_tokens || 0) * pout) / 1e6;
@@ -262,6 +254,22 @@ async function planApi(req, env, p) {
   u2.n++; u2.in += us.input_tokens || 0; u2.cacheIn += cacheTok; u2.out += us.output_tokens || 0; u2.usd = (u2.usd || 0) + usd;
   u2.ips = u2.ips || {}; if (!owner) u2.ips[ip] = (u2.ips[ip] || 0) + 1;
   await env.GALLERY.put(usageKey, JSON.stringify(u2), { httpMetadata: { contentType: 'application/json' } });
+  const text = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
+  const tryParse = (t) => { try { return JSON.parse(t); } catch { return null; } };
+  let plan = tryParse(text) || tryParse(text.replace(/^```(?:json)?\s*|\s*```$/g, ''))
+    || (text.indexOf('{') >= 0 ? tryParse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) : null);
+  if (plan && !Array.isArray(plan.blocks)) plan = Object.values(plan).find((v) => v && typeof v === 'object' && Array.isArray(v.blocks)) || plan;
+  if (!plan || !Array.isArray(plan.blocks)) {
+    console.log('plan parse failed', j.stop_reason, text.slice(0, 500));
+    const why = j.stop_reason === 'max_tokens' ? 'The AI answer was cut off (too long).' : j.stop_reason === 'refusal' ? 'The AI declined this request.' : 'The AI answer could not be read. Please try again.';
+    return json({ error: why, debug: owner ? { stop_reason: j.stop_reason, model: j.model, text: text.slice(0, 600), content_types: (j.content || []).map((c) => c.type) } : undefined,
+      usage: await usageView(u2) }, 502, H);
+  }
+  // keep only what the page renders
+  const str = (x, n = 300) => (typeof x === 'string' ? x.slice(0, n) : '');
+  plan = { summary: str(plan.summary, 800), blocks: plan.blocks.slice(0, 12).map((x) => ({ rig: str(x.rig, 4), start: str(x.start, 5), end: str(x.end, 5), target: str(x.target, 60),
+    target_name: str(x.target_name, 80), filter: str(x.filter, 80), exposure: str(x.exposure, 80), framing: str(x.framing, 120), why: str(x.why, 300) })),
+    before: (plan.before || []).slice(0, 5).map((x) => str(x)), during: (plan.during || []).slice(0, 5).map((x) => str(x)), after: (plan.after || []).slice(0, 4).map((x) => str(x)) };
   return json({ plan, left: owner ? null : Math.max(0, perIp - (u2.ips[ip] || 0)), usage: await usageView(u2) }, 200, H);
 }
 
