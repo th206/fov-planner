@@ -5325,7 +5325,10 @@ async function aiRun() {
   try {
     const r = await fetch('/api/plan', { method: 'POST', headers: aiHeaders(), body: JSON.stringify(b) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) { $('#aiMsg').textContent = j.error || `The assistant could not answer (${r.status}).`; if (j.left != null && aiStatus) aiStatus.left = j.left; return; }
+    if (!r.ok) { $('#aiMsg').textContent = j.error || `The assistant could not answer (${r.status}).`; if (j.left != null && aiStatus) aiStatus.left = j.left;
+      if (j.usage && aiStatus) { aiStatus.usage = j.usage; renderAi(); }
+      if (j.debug) $('#aiOut').innerHTML = `<details open class="info"><summary>Owner details (only you see this)</summary><pre style="white-space:pre-wrap;font-size:11px">${esc(JSON.stringify(j.debug, null, 1))}</pre></details>`;
+      return; }
     $('#aiMsg').textContent = '';
     if (aiStatus && j.left != null) aiStatus.left = j.left; if (aiStatus && j.usage) aiStatus.usage = j.usage;
     aiShow(j.plan, aiRigIds);
