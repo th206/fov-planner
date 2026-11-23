@@ -89,6 +89,10 @@
     border-radius: 8px; padding: 7px 10px; font-size: 12px; line-height: 1.5; }
   #measureBox .mbig { font-size: 15px; font-weight: 700; color: #ffd33d; }
   #measureBox button { float: right; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; }
+  #measureBox #measureMore { color: #ffd33d; font-size: 12px; }
+  @media (max-width: 600px) { main.measuring #legend { display: none !important; }
+    #measureBox { left: 8px; bottom: 44px; max-width: calc(100% - 12px); padding: 4px 8px; font-size: 11px; line-height: 1.4; background: rgba(10,13,20,.78); }
+    #measureBox .mbig { font-size: 13px; } }
   main.measuring #aladin { cursor: crosshair; }
   #targetCard { position: relative; }
   #targetCard .tgtsum { padding-right: 112px; }
@@ -100,6 +104,15 @@
   .wishrow.loaded .wmain b { color: var(--accent); }
   .wishrow button { flex: none; }
   .wnote { margin-top: 3px; font-size: 12px; color: var(--text); opacity: .85; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .airigs { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0; font-size: 12.5px; }
+  .airigs label { display: inline-flex; align-items: center; gap: 5px; }
+  #aiOut .aisum { margin: 8px 0 6px; }
+  #aiOut .airig { margin: 8px 0 2px; font-weight: 600; font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
+  #aiOut .aiblk { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 6px 8px; margin: 4px 0; font-size: 12.5px; }
+  #aiOut .aiblk .aitime { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent); margin-right: 6px; }
+  #aiOut .aiblk .aiset { color: var(--muted); }
+  #aiOut ul { margin: 4px 0 4px 18px; padding: 0; font-size: 12.5px; }
+  #aiOut h4 { margin: 10px 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
   .wishnote { width: 100%; box-sizing: border-box; margin-top: 6px; font: inherit; font-size: 12.5px; resize: vertical; }
   #wishNoteT { margin: 4px 0 6px; }
   #syncBody code { font-size: 14px; letter-spacing: .05em; color: var(--text); background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 5px; user-select: all; }
@@ -500,6 +513,29 @@
       <div class="loadedbar" id="loadedBar"></div>
       <div id="goBoxT" class="gobox"></div>
       <div id="verdict" class="note">Waiting for the forecast…</div>
+    </section>
+
+    <section data-tab="tonight" class="card" id="aiCard">
+      <h2>✦ Plan my night <span class="tag warn" style="text-transform:none;letter-spacing:0">AI · test phase</span></h2>
+      <div id="aiIntro" class="note">An AI assistant turns tonight's forecast, your rigs and the targets that suit them into a timed plan: which target on which rig, when, with filters and sub lengths.</div>
+      <div id="aiLocked" class="note" hidden>
+        <p style="margin:6px 0">AI planning is being tested right now. It will open to everyone, free, soon.</p>
+        <details><summary>Have a tester code?</summary>
+          <div class="row" style="margin-top:6px"><input id="aiCodeIn" type="text" autocomplete="off" spellcheck="false" placeholder="tester code" style="flex:1;min-width:0"><button type="button" class="icon" id="aiCodeBtn">Use</button></div>
+        </details>
+      </div>
+      <div id="aiForm" hidden>
+        <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
+          <label class="note">From <input id="aiFrom" type="time" autocomplete="off"></label>
+          <label class="note">to <input id="aiTo" type="time" autocomplete="off"></label>
+        </div>
+        <div id="aiRigs" class="airigs"></div>
+        <textarea id="aiAsk" class="wishnote" rows="2" maxlength="400" placeholder="Anything else? e.g. “something I haven't shot before”, “I have an L-eNhance”, “must pack up by 2”"></textarea>
+        <div class="row" style="margin-top:6px"><button type="button" class="icon" id="aiGo">✦ Plan my night</button> <span id="aiMsg" class="note"></span></div>
+      </div>
+      <div id="aiOut"></div>
+      <div id="aiUsage" class="note" style="margin-top:6px"></div>
+      <details class="info"><summary>ⓘ How this works</summary><div class="wxnote">The planner sends the AI only what it has already worked out for this night: your chosen rigs (field, image scale, filter, wind limit), the best targets for them with the hours each one is clear of your horizon, the hour-by-hour forecast, the Moon, your sky's Bortle class and your wish list with its notes. Your site is rounded to about 10 km. The AI (Claude, by Anthropic) arranges these into a plan; check times against the Visibility chart before you rely on them. Nothing is kept after the answer is sent back.</div></details>
     </section>
 
     <section data-tab="tonight" class="card">
@@ -1014,7 +1050,7 @@ async function initAladin() {
 }
 
 /* ---------- Measure: angular distance between two points (snaps to a catalogue object or a Gaia star) ---------- */
-const measure = { on: false, pts: [], ov: null, seq: 0 };
+const measure = { on: false, pts: [], ov: null, seq: 0, full: !window.matchMedia('(max-width: 600px)').matches };
 const dms = (deg) => { const t = Math.round(deg * 36000), d = Math.floor(t / 36000), m = Math.floor((t % 36000) / 600), s = (t % 600) / 10;
   return d ? `${d}° ${String(m).padStart(2, '0')}′ ${s.toFixed(1).padStart(4, '0')}″` : m ? `${m}′ ${s.toFixed(1).padStart(4, '0')}″` : `${s.toFixed(1)}″`; };
 function posAngle(ra1, d1, ra2, d2) {   // position angle of point 2 seen from point 1, east of north
@@ -1049,7 +1085,9 @@ function renderMeasure() {
   let dra = ((b.ra - a.ra + 540) % 360) - 180; const ddec = b.dec - a.dec;
   const draT = dra / 15 * 3600, sgn = (x) => (x < 0 ? '−' : '+');
   const rigs = state.rigs.filter((r) => r.on).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g).slice(0, 3);
-  box.innerHTML = close + `<span class="mbig">${dms(sep)}</span> <span class="note">= ${sep >= 1 ? sep.toFixed(3) + '°' : (sep * 60).toFixed(2) + '′'} · position angle ${pa.toFixed(1)}° (east of north)</span><br>
+  const more = `<button type="button" id="measureMore" title="${measure.full ? 'Show less' : 'Show the details'}">${measure.full ? 'less ▴' : 'more ▾'}</button>`;
+  if (!measure.full) { box.innerHTML = close + more + `<span class="mbig">${dms(sep)}</span> <span class="note">· PA ${pa.toFixed(0)}°${a.name || b.name ? ` · ${esc(a.name || 'A')} → ${esc(b.name || 'B')}` : ''}</span>`; return; }
+  box.innerHTML = close + more + `<span class="mbig">${dms(sep)}</span> <span class="note">= ${sep >= 1 ? sep.toFixed(3) + '°' : (sep * 60).toFixed(2) + '′'} · position angle ${pa.toFixed(1)}° (east of north)</span><br>
     A: ${lbl(a)}<br>B: ${lbl(b)}<br>
     <span class="note">ΔRA ${sgn(draT)}${Math.floor(Math.abs(draT) / 60)}m ${(Math.abs(draT) % 60).toFixed(1)}s (${sgn(dra)}${dms(Math.abs(dra) * Math.cos(((a.dec + b.dec) / 2) * D2R))} on the sky) · ΔDec ${sgn(ddec)}${dms(Math.abs(ddec))}${rigs.length ? '<br>' + rigs.map(({ r, g }) =>
       `<span class="rigdot" style="--c:${r.color}"></span>${Math.round(sep * 3600 / g.scale)} px on ${esc(g.s.name)} (${(sep / Math.max(g.w, g.h) * 100).toFixed(0)}% of the long side)`).join(' · ') : ''}</span>`;
@@ -1076,7 +1114,7 @@ function setMeasure(on) {
   renderMeasure(); if (on) track('measure');
 }
 $('#measureBtn').addEventListener('click', () => setMeasure(!measure.on));
-$('#measureBox').addEventListener('click', (e) => { if (e.target.id === 'measureClose') setMeasure(false); });
+$('#measureBox').addEventListener('click', (e) => { if (e.target.id === 'measureClose') setMeasure(false); else if (e.target.id === 'measureMore') { measure.full = !measure.full; renderMeasure(); } });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && measure.on) setMeasure(false); });
 { // a tap (not a drag) on the map adds a point while measuring
   let down = null; const el = $('#aladin');
@@ -2044,7 +2082,10 @@ $('#eventsList').addEventListener('click', (e) => {   // tap an event: plan that
   $('#night').value = n; $('#night').dispatchEvent(new Event('change')); requestAnimationFrame(() => $('#verdictCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
 });
 /* ---------- Live site sensors (CheapoDC etc. → worker /api/site) ---------- */
-let siteData = null, siteTimer = null, siteSeq = 0;
+let siteData = null, siteTimer = null, siteSeq = 0, siteWindCmp = null, siteLastTs = 0;
+// Forecasts and airports give wind at the standard 10 m; an anemometer on a tripod or truck roof sits lower, where the
+// wind is weaker. Scale up with the log wind profile over open desert (roughness length 3 cm).
+function mastFactor() { const z = Math.max(0.5, Math.min(10, +state.siteFeed?.mast || 2)); return Math.log(10 / 0.03) / Math.log(z / 0.03); }
 function spark(hist, key, color, key2, color2) {   // tiny line chart of the last hours
   const pts = hist.filter((r) => Number.isFinite(r[key])); if (pts.length < 2) return '';
   const vals = [...pts.map((r) => r[key]), ...(key2 ? hist.filter((r) => Number.isFinite(r[key2])).map((r) => r[key2]) : [])];
@@ -2081,7 +2122,12 @@ function renderSite() {
     const word = !Number.isFinite(dlt) ? '' : dlt < -18 ? '<span class="tag good">clear</span>' : dlt < -10 ? '<span class="tag warn">some haze or thin cloud</span>' : '<span class="tag bad">cloudy</span>';
     cells.push(`<div>Sky temperature<div class="sv">${f1(L.sky, ' °C')}</div><span class="note">${Number.isFinite(dlt) ? `${dlt.toFixed(1)} °C vs air ` : ''}${word}</span>${spark(H, 'sky', '#b392f0')}</div>`);
   }
-  if (Number.isFinite(L.wind)) cells.push(`<div>Wind<div class="sv">${f1(L.wind, ' km/h', 0)}</div>${Number.isFinite(L.gust) ? `<span class="note">gusts ${f1(L.gust, ' km/h', 0)}</span>` : ''}${spark(H, 'wind', '#6ea8ff', 'gust', '#e5534b')}</div>`);
+  if (Number.isFinite(L.wind)) {
+    const c = siteWindCmp, mast = +state.siteFeed?.mast || 2, word = !c ? '' : c.ratio >= 1.3 ? '<span class="tag warn">stronger than forecast</span>' : c.ratio <= 0.75 ? '<span class="tag good">calmer than forecast</span>' : '<span class="tag good">as forecast</span>';
+    cells.push(`<div>Wind<div class="sv">${f1(L.wind, ' km/h', 0)}</div>${Number.isFinite(L.gust) ? `<span class="note">gusts ${f1(L.gust, ' km/h', 0)}</span>` : ''}
+      ${c ? `<br><span class="note">≈ ${Math.round(c.m10)} km/h at 10 m (sensor at ${mast} m) · forecast ${Math.round(c.fw)}</span> ${word}` : ''}${spark(H, 'wind', '#6ea8ff', 'gust', '#e5534b')}</div>`);
+  }
+  if (L.ts !== siteLastTs) { siteLastTs = L.ts; if (Number.isFinite(L.wind)) setTimeout(rerenderWeather, 0); }   // new wind reading: redo the wind correction
   box.innerHTML = `<div class="sitegrid">${cells.join('')}</div><div class="note" style="margin-top:6px">${L.dev ? esc(L.dev) + ' · ' : ''}last 12 h${Number.isFinite(L.rssi) ? ` · Wi-Fi ${L.rssi} dBm` : ''}</div>`;
 }
 function siteFeedRender() {
@@ -2093,6 +2139,8 @@ function siteFeedRender() {
   }
   box.innerHTML = `Feed is set up. Put these two values into <code>CDCSiteFeed.h</code> in the CheapoDC firmware:
     <div style="margin-top:6px">SITEFEED_ID <code>${esc(f.id)}</code><br>SITEFEED_KEY <code>${esc(f.key)}</code></div>
+    <div class="row" style="margin-top:8px"><label title="Off: the airport check corrects the wind forecast, and your anemometer is only shown. On: a fresh anemometer reading replaces the airport for the correction."><input type="checkbox" id="siteUseWind" ${f.useWind ? 'checked' : ''}> Use my anemometer to correct the wind forecast</label></div>
+    <div class="row" style="margin-top:8px"><label title="Forecasts give wind at 10 m; a lower sensor reads less, so its readings are scaled up">Anemometer height <input id="siteMast" class="num" type="number" min="0.5" max="10" step="0.5" style="width:60px" value="${esc(String(f.mast || 2))}"> m above ground</label></div>
     <div class="row" style="margin-top:8px"><button type="button" class="icon ghost" id="siteCopy">Copy both lines</button>
       <button type="button" class="icon ghost" id="siteDelete">Delete feed</button></div>
     <div class="note" id="siteCopyOut"></div>
@@ -2113,6 +2161,8 @@ document.addEventListener('click', async (e) => {
     state.siteFeed = null; saveStore(); siteFeedRender(); loadSite();
   } else if (id === 'siteReload') loadSite();
 });
+document.addEventListener('change', (e) => { if (e.target.id === 'siteUseWind' && state.siteFeed) { state.siteFeed.useWind = e.target.checked; saveStore(); rerenderWeather(); } });
+document.addEventListener('change', (e) => { if (e.target.id === 'siteMast' && state.siteFeed) { const v = parseFloat(e.target.value); if (v > 0) { state.siteFeed.mast = v; saveStore(); renderSite(); rerenderWeather(); } } });
 siteFeedRender(); loadSite();
 setInterval(() => { if (state.siteFeed && document.visibilityState === 'visible' && $('#app').dataset.tab === 'sky') loadSite(); else if (siteData) renderSite(); }, 60000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.siteFeed) loadSite(); });
@@ -2164,6 +2214,7 @@ function renderTonight() {
       ${best.swap ? `<div class="tn-l2"><span class="tag warn">swap filter</span> ${esc(filterById(best.r.filter)?.name || 'your filter')} blocks most of a ${TYPE_GROUP[c.t] === 'cl' ? 'cluster' : 'galaxy'}'s light — use ${swapAdvice(best.g)}</div>` : ''}
     </div>`;
   $('#tnCount').textContent = `${items.length} target${items.length === 1 ? '' : 's'}`;
+  try { renderAi(); } catch {}
   const gl = Object.fromEntries(GROUPS);
   $('#tnFilterSum').textContent = `Filters: ${o.types.map((g) => gl[g]).join(', ') || 'no types'} · ≥${o.minAlt}° · fill ≥${o.minFill}%${o.types.includes('pn') ? ` (planetaries ≥${o.minFillPn ?? 3}%)` : ''} · ≤${o.maxPanels} panel${o.maxPanels == 1 ? '' : 's'}${o.avoidMoon ? ' · avoid Moon' : ''}`;
   markLoaded();
@@ -3362,8 +3413,17 @@ function renderWeather(w, a, t0, t1, c) {
     if (c != null && c >= 500 && !capped && ((rp ?? 0) >= 30 || (cl ?? 0) >= 40)) return 1;
     return 0;
   };
-  // Wind: the worst gust across the chosen model and the three comparison models, scaled up when the airport shows the forecast running low
-  const wb = state.windBias, nowMs = Date.now();
+  // Wind: the worst gust across the chosen model and the three comparison models, scaled up when a measurement shows the
+  // forecast running low. Your own anemometer at the site (live site feed) wins over the nearest airport.
+  const nowMs = Date.now();
+  let wb = state.windBias;
+  { const sw = siteData?.last, hf = mastFactor();
+    const hr = sw ? Math.floor(sw.ts / 3600e3) * 3600e3 : 0, fw = sw ? val('wind_speed_10m', hr) : null;
+    if (state.siteFeed?.useWind && sw && Number.isFinite(sw.wind) && nowMs - sw.ts < 20 * 60e3 && fw != null) {   // only when switched on (Gear → Site sensors)
+      const m10 = sw.wind * hf;
+      wb = { ratio: Math.max(0.4, Math.min(3, (m10 + 4) / (fw + 4))), obs: m10, fc: fw, km: 0, at: sw.ts, site: true, raw: sw.wind };
+    }
+    siteWindCmp = sw && Number.isFinite(sw.wind) && fw != null ? { m10: sw.wind * hf, fw, ratio: (sw.wind * hf + 4) / (fw + 4) } : null;   if (siteData) setTimeout(renderSite, 0); }
   const biasOn = wb && wb.ratio >= 1.3 && t0 - nowMs < 18 * 3600e3 && t1 > nowMs;   // only for tonight
   const gustRaw = (ms) => { const v = [val('wind_gusts_10m', ms), ...CMP_MODELS.map((m) => Cm('wind_gusts_10m_' + m.id, ms))].filter((x) => x != null); return v.length ? Math.max(...v) : undefined; };
   // The airport correction fades with distance (none beyond ~100 km) and with time after the report (none after ~8 h),
@@ -3374,7 +3434,8 @@ function renderWeather(w, a, t0, t1, c) {
   const gustAt = (ms) => { const g = gustRaw(ms); return g == null ? undefined : g * biasF(ms); };
   // say, under the airport line, what the table below does with it — so the two numbers can be compared
   { const el = $('#wxBiasNote'), hr = Math.floor(nowMs / 3600e3) * 3600e3, w0 = val('wind_speed_10m', hr), f0 = biasF(hr);
-    if (el && wb) el.innerHTML = '<br><span class="note">' + (w0 == null || hr < t0 || hr >= t1
+    if (el && wb?.site) el.innerHTML = '<br><span class="note">Your site\'s anemometer is reporting, so the table uses it instead of the airport' + (f0 > 1.01 ? `: tonight's winds are raised ×${f0.toFixed(2)} to match it, fading over ~8 h.` : ': the forecast matches it, so no correction.') + ' See <i>At your site now</i>.</span>';
+    else if (el && wb) el.innerHTML = '<br><span class="note">' + (w0 == null || hr < t0 || hr >= t1
       ? `The table below is for your site${wb.km > 5 ? `, ${Math.round(wb.km)} km away` : ''}${biasOn ? '; tonight\'s winds are raised to match, less with distance and time.' : '.'}`
       : `At your site${wb.km > 5 ? ` (${Math.round(wb.km)} km away)` : ''} the forecast for this hour is ${Math.round(w0)} km/h` + (f0 > 1.01
         ? `; the table raises it to <b>${Math.round(w0 * f0)} km/h</b> (×${f0.toFixed(2)}: the airport's ${wb.ratio.toFixed(1)}× counts for less the further away it is, and fades over ~8 h).`
@@ -5163,6 +5224,147 @@ if (syncOk) {
   if (linkName && !syncCfg()) { syncReady = true; setTimeout(() => { setTab('gear'); $('#syncPinIn')?.focus(); }, 400); }
   else setTimeout(() => syncCheck(true), 400);
 } else { syncReady = true; renderSync(); }
+
+/* ---------- ✦ Plan my night (AI, test phase) ----------
+   The planner sends what it has already worked out (rigs, tonight's best targets with their clear windows, the hourly
+   forecast, Moon, Bortle, wish list) to /api/plan; the Worker asks Claude to arrange it into a timed plan. */
+const AI_KEY = 'mrp.aicode', AI_PLAN = 'mrp.aiplan';
+const aiCode = () => { try { return localStorage.getItem(AI_KEY) || ''; } catch { return ''; } };
+const aiHeaders = () => { const h = { 'content-type': 'application/json' }; if (galKey()) h['x-upload-key'] = galKey(); if (aiCode()) h['x-plan-code'] = aiCode(); return h; };
+var aiStatus = null, aiBusy = false, aiRigIds = {};
+async function aiCheck() {
+  try { const r = await fetch('/api/plan/status', { headers: aiHeaders(), cache: 'no-store' }); aiStatus = r.ok ? await r.json() : { allowed: false }; }
+  catch { aiStatus = { allowed: false, offline: true }; }
+  renderAi();
+}
+function aiLocalTime(ms) { return hhmms(ms); }
+function aiParseTime(v, ref) {   // "HH:MM" local → ms in this night (evening times before 12:00 next day)
+  const [h, m] = (v || '').split(':').map(Number); if (!Number.isFinite(h)) return null;
+  const { t0 } = nightWindow(), tz = state.site.tz, d0 = new Date(t0 + tz * 3600e3);
+  let ms = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), d0.getUTCDate(), h, m || 0) - tz * 3600e3;
+  if (ms < t0 - 3600e3) ms += 86400e3;
+  return ms;
+}
+function renderAi() {
+  const card = $('#aiCard'); if (!card) return;
+  const ok = !!aiStatus?.allowed;
+  $('#aiLocked').hidden = ok || !aiStatus; $('#aiForm').hidden = !ok;
+  if (aiStatus?.offline) { $('#aiLocked').hidden = false; }
+  if (ok) {
+    const T = nightTimes();
+    if (!$('#aiFrom').value && T.darkA) $('#aiFrom').value = aiLocalTime(T.darkA);
+    if (!$('#aiTo').value && T.darkB) $('#aiTo').value = aiLocalTime(T.darkB);
+    const rigs = state.rigs.filter((r) => rigGeom(r));
+    const prev = new Set([...card.querySelectorAll('#aiRigs input:checked')].map((i) => i.value));
+    $('#aiRigs').innerHTML = rigs.map((r) => { const g = rigGeom(r), on = prev.size ? prev.has(r.id) : r.on;
+      return `<label><input type="checkbox" value="${esc(r.id)}" ${on ? 'checked' : ''}><span class="rigdot" style="--c:${r.color}"></span>${esc(g.s.name)} + ${esc(g.c.name)}</label>`; }).join('');
+  }
+  const u = aiStatus?.usage;
+  $('#aiUsage').innerHTML = u ? `Owner view · today ${u.today.n} plan${u.today.n === 1 ? '' : 's'} (limit ${u.dailyMax}) · this month ${u.month.n} · ≈ $${u.month.usd.toFixed(3)} · model ${esc(aiStatus.model || '')}`
+    : ok && aiStatus.left != null ? `${aiStatus.left} plan${aiStatus.left === 1 ? '' : 's'} left today on this connection` : '';
+  if (!$('#aiOut').innerHTML) { try { const c = JSON.parse(localStorage.getItem(AI_PLAN) || 'null'); if (c && c.night === $('#night').value && c.siteKey === aiSiteKey()) aiShow(c.plan, c.rigMap, true); } catch {} }
+}
+const aiSiteKey = () => `${state.site.lat.toFixed(2)},${state.site.lon.toFixed(2)}`;
+function aiWindows(ra, dec, a, b, minAlt, hz) {   // clear-of-horizon stretches between a and b, 10-min steps
+  const out = []; let s = null, peak = -90, peakMs = a;
+  for (let ms = a; ms <= b; ms += 10 * 60e3) {
+    const cl = skyClear(ra, dec, ms, minAlt, hz); if (cl.alt > peak) { peak = cl.alt; peakMs = ms; }
+    if (cl.ok && s == null) s = ms;
+    if ((!cl.ok || ms + 10 * 60e3 > b) && s != null) { out.push([s, cl.ok ? ms : ms - 10 * 60e3]); s = null; }
+  }
+  return { win: out.filter(([x, y]) => y - x >= 20 * 60e3).map(([x, y]) => `${aiLocalTime(x)}-${aiLocalTime(y)}`), peak: Math.round(peak), peakAt: aiLocalTime(peakMs) };
+}
+function aiBuild() {
+  const T = nightTimes(), tz = state.site.tz, hz = siteHorizon(), minAlt = state.tn.minAlt || 30;
+  const from = aiParseTime($('#aiFrom').value) ?? T.darkA, to = aiParseTime($('#aiTo').value) ?? T.darkB;
+  if (!(from && to && to > from)) return { error: 'Pick a time window inside tonight.' };
+  const ids = [...document.querySelectorAll('#aiRigs input:checked')].map((i) => i.value);
+  const rigs = state.rigs.filter((r) => ids.includes(r.id)).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g);
+  if (!rigs.length) return { error: 'Tick at least one rig.' };
+  aiRigIds = {}; const letter = (i) => String.fromCharCode(65 + i);
+  const rigOut = rigs.map(({ r, g }, i) => { aiRigIds[letter(i)] = r.id; const f = filterById(r.filter), kind = camKind(g.c);
+    return { id: letter(i), name: `${g.s.name} + ${g.c.name}`, focal_mm: Math.round(g.fl), f_ratio: g.fr ? +g.fr.toFixed(1) : null, aperture_mm: g.s.ap || null,
+      camera: g.c.name, sensor: kind === 'mono' ? 'mono' : 'colour', pixel_um: g.c.px, scale_arcsec_px: +g.scale.toFixed(2), field: `${(g.w * 60).toFixed(0)}' x ${(g.h * 60).toFixed(0)}'`,
+      filter: f ? `${f.name} (${(FILTER_TYPES.find(([k]) => k === f.type) || [, f.type])[1]})` : 'none set', mosaic_now: r.cols * r.rows > 1 ? `${r.cols}x${r.rows}` : null, wind_limit_kmh: windLimit(g.s) }; });
+  // targets: tonight's list for these rigs (current filters), best 25
+  const keep = new Set(ids), items = (tnCache?.items || []).filter((it) => keep.has(it.best.r.id)).slice(0, 25);
+  const letterOf = (rid) => Object.keys(aiRigIds).find((k) => aiRigIds[k] === rid);
+  const targets = items.map((it) => { const { c, best } = it, w = aiWindows(c.ra, c.dec, from, to, minAlt, hz);
+    return { id: c.id, name: c.name || c.alt.split(' · ')[0] || undefined, type: TYPE_NAMES[c.t] || c.t, size: c.maj === c.min ? `${c.maj}'` : `${c.maj}'x${c.min}'`, mag: c.mag ?? undefined,
+      best_rig: letterOf(best.r.id), framing: best.f.kind === 'fits' ? `fits, ${Math.round(best.f.fill * 100)}% of frame` : `${best.f.nc}x${best.f.nr} mosaic`,
+      clear: w.win, highest: `${w.peak}° at ${w.peakAt}`, usable_hours_tonight: +it.hours.toFixed(1), moon_sensitive: it.moonSensitive || undefined,
+      closest_moon_deg: it.moonSep < 180 ? Math.round(it.moonSep) : undefined, needs_filter_swap: best.swap || undefined, already_imaged: it.done ? true : undefined }; });
+  const wish = (state.wish || []).slice(0, 15).map((w) => { const t = w.t || {}; if (!Number.isFinite(t.ra)) return null; const v = aiWindows(t.ra, t.dec, from, to, minAlt, hz);
+    return { id: normId(t.mainId || t.name || w.label), note: w.note ? String(w.note).slice(0, 300) : undefined, clear: v.win, highest: `${v.peak}° at ${v.peakAt}` }; }).filter(Boolean);
+  // hourly forecast for the window
+  let hourly = [];
+  if (wxLast) { const [w, a, , , c] = wxLast, W = hourlyLookup(w), Cm = c ? hourlyLookup(c) : null, elev = w.elevation || 0;
+    for (let ms = Math.floor(from / 3600e3) * 3600e3; ms <= to; ms += 3600e3) {
+      const cl = [W('cloud_cover', ms), ...(Cm ? CMP_MODELS.map((m) => Cm('cloud_cover_' + m.id, ms)) : [])].filter((x) => x != null).sort((x, y) => x - y);
+      const see = seeingAt(W, ms, elev), t2 = W('temperature_2m', ms), dp = W('dew_point_2m', ms), mid = ms + 1800e3, [sr, sd] = sunRaDec(mid), [mr, md] = moonRaDec(mid);
+      hourly.push({ t: aiLocalTime(ms), dark: altAz(sr, sd, mid, state.site.lat, state.site.lon) < -18 || undefined, cloud: cl.length ? Math.round(cl[(cl.length - 1) >> 1]) : null,
+        cloud_spread: cl.length > 1 ? Math.round(cl[cl.length - 1] - cl[0]) : undefined, seeing: see ? +see.total.toFixed(1) : undefined, gust: W('wind_gusts_10m', ms) != null ? Math.round(W('wind_gusts_10m', ms)) : undefined,
+        wind: W('wind_speed_10m', ms) != null ? Math.round(W('wind_speed_10m', ms)) : undefined, temp: t2 != null ? Math.round(t2) : undefined, dew_gap: t2 != null && dp != null ? Math.round((t2 - dp) * 10) / 10 : undefined,
+        rain_pct: W('precipitation_probability', ms) ?? undefined, moon_alt: Math.round(altAz(mr, md, mid, state.site.lat, state.site.lon)) }); } }
+  const mp = moonPhase((from + to) / 2);
+  const hzTxt = hz ? HZ_DIRS.map((d, i) => `${d} ${Math.round(horizonAlt(i * 45, hz))}°`).join(', ') : 'flat (none set)';
+  return { data: {
+    night: $('#night').value, local_window: `${aiLocalTime(from)}-${aiLocalTime(to)}`, utc_offset: tz,
+    site: { lat: Math.round(state.site.lat * 10) / 10, lon: Math.round(state.site.lon * 10) / 10, bortle: state.sky?.bortle || null, horizon: hzTxt, min_altitude: minAlt },
+    darkness: T.darkA && T.darkB ? `${aiLocalTime(T.darkA)}-${aiLocalTime(T.darkB)}` : 'none', sunset: T.set ? aiLocalTime(T.set) : null, sunrise: T.rise ? aiLocalTime(T.rise) : null,
+    moon: { illumination_pct: Math.round(mp.illum * 100), moon_free_dark: T.moonless ? `${aiLocalTime(T.moonless[0])}-${aiLocalTime(T.moonless[1])}` : 'none' },
+    verdict: ($('#goBoxT')?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 400),
+    seeing_setting_arcsec: state.seeing, rigs: rigOut, targets, wish_list: wish, hourly,
+  }, ask: ($('#aiAsk').value || '').trim().slice(0, 400) };
+}
+async function aiRun() {
+  if (aiBusy) return;
+  const b = aiBuild(); if (b.error) { $('#aiMsg').textContent = b.error; return; }
+  if (!b.data.targets.length && !b.data.wish_list.length) { $('#aiMsg').textContent = 'No targets suit these rigs tonight: check Tonight\'s targets filters.'; return; }
+  aiBusy = true; $('#aiGo').disabled = true; $('#aiMsg').textContent = 'Planning… (about 10–20 s)'; track('ai/plan');
+  try {
+    const r = await fetch('/api/plan', { method: 'POST', headers: aiHeaders(), body: JSON.stringify(b) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { $('#aiMsg').textContent = j.error || `The assistant could not answer (${r.status}).`; if (j.left != null && aiStatus) aiStatus.left = j.left; return; }
+    $('#aiMsg').textContent = '';
+    if (aiStatus && j.left != null) aiStatus.left = j.left; if (aiStatus && j.usage) aiStatus.usage = j.usage;
+    aiShow(j.plan, aiRigIds);
+    try { localStorage.setItem(AI_PLAN, JSON.stringify({ night: $('#night').value, siteKey: aiSiteKey(), plan: j.plan, rigMap: aiRigIds })); } catch {}
+    renderAi();
+  } catch { $('#aiMsg').textContent = 'Could not reach the assistant (offline?).'; }
+  finally { aiBusy = false; $('#aiGo').disabled = false; }
+}
+function aiShow(p, rigMap, cached) {
+  if (!p) return; aiRigIds = rigMap || aiRigIds;
+  const rigOf = (L) => state.rigs.find((r) => r.id === rigMap?.[L]);
+  const byRig = {}; for (const bl of p.blocks || []) (byRig[bl.rig] ||= []).push(bl);
+  const li = (a) => (a || []).filter(Boolean).map((x) => `<li>${esc(x)}</li>`).join('');
+  let html = `<div class="aisum">${cached ? '<span class="note">Last plan for this night · </span>' : ''}${esc(p.summary || '')}</div>`;
+  for (const L of Object.keys(byRig).sort()) {
+    const r = rigOf(L), g = r && rigGeom(r);
+    html += `<div class="airig">${r ? `<span class="rigdot" style="--c:${r.color}"></span>${esc(g ? `${g.s.name} + ${g.c.name}` : L)}` : esc(L)}</div>`;
+    for (const bl of byRig[L]) html += `<div class="aiblk"><span class="aitime">${esc(bl.start || '')}–${esc(bl.end || '')}</span><b>${esc(bl.target || '')}</b>${bl.target_name ? ` <span class="note">${esc(bl.target_name)}</span>` : ''}
+      ${bl.target ? `<button type="button" class="icon ghost" data-aiload="${esc(bl.target)}" data-airig="${esc(L)}" style="float:right">Load ▸</button>` : ''}
+      <div class="aiset">${[bl.filter, bl.exposure, bl.framing].filter(Boolean).map(esc).join(' · ')}</div>${bl.why ? `<div class="note">${esc(bl.why)}</div>` : ''}</div>`;
+  }
+  if (p.before?.length) html += `<h4>Before you start</h4><ul>${li(p.before)}</ul>`;
+  if (p.during?.length) html += `<h4>During the night</h4><ul>${li(p.during)}</ul>`;
+  if (p.after?.length) html += `<h4>Before you pack up</h4><ul>${li(p.after)}</ul>`;
+  html += '<div class="note" style="margin-top:6px">AI-made plan from the planner\'s numbers: check times on the Visibility chart.</div>';
+  $('#aiOut').innerHTML = html;
+}
+$('#aiGo')?.addEventListener('click', aiRun);
+$('#aiCodeBtn')?.addEventListener('click', () => { const v = $('#aiCodeIn').value.trim(); try { v ? localStorage.setItem(AI_KEY, v) : localStorage.removeItem(AI_KEY); } catch {} aiCheck(); });
+$('#aiOut')?.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-aiload]'); if (!b) return;
+  const id = b.dataset.aiload, k = (tnCache?.items || []).findIndex((it) => catKey(it.c.id) === catKey(id));
+  if (k >= 0) { pickTonight(k); return; }
+  const wk = (state.wish || []).findIndex((w) => catKey(normId(w.t?.mainId || w.t?.name || w.label)) === catKey(id));
+  if (wk >= 0) { wishLoad(state.wish[wk].key, true); return; }
+  $('#q').value = id; $('#searchForm').requestSubmit();
+});
+$('#night')?.addEventListener('change', () => { $('#aiOut').innerHTML = ''; $('#aiFrom').value = ''; $('#aiTo').value = ''; renderAi(); });
+setTimeout(aiCheck, 1500);
 
 // Contact links: the address is put together only when tapped, so it is not sitting in the page for spam robots
 document.addEventListener('click', (e) => {
