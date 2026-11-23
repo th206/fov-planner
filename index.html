@@ -1744,7 +1744,7 @@ const TYPE_NAMES = { G: 'Galaxy', GPair: 'Galaxy pair', GTrpl: 'Galaxy triplet',
 const TYPE_GROUP = { G: 'gal', GPair: 'gal', GTrpl: 'gal', GGroup: 'gal', HII: 'neb', EmN: 'neb', Neb: 'neb', RfN: 'neb', 'Cl+N': 'neb', Sh2: 'neb',
   LBN: 'lbn', SNR: 'snr', DrkN: 'dark', LDN: 'dark', PN: 'pn', OCl: 'cl', GCl: 'cl' };
 const BROADBAND = new Set(['G', 'GPair', 'GTrpl', 'GGroup', 'RfN', 'DrkN', 'LDN', 'OCl', 'GCl']);   // hurt most by moonlight
-const GROUPS = [['gal', 'Galaxies'], ['neb', 'Nebulae'], ['lbn', 'LBN'], ['dark', 'Dark (LDN)'], ['snr', 'Supernova remnants'], ['pn', 'Planetary'], ['cl', 'Clusters']];
+const GROUPS = [['gal', 'Galaxies'], ['neb', 'Nebulae'], ['lbn', 'LBN'], ['dark', 'Dark nebulae'], ['snr', 'Supernova remnants'], ['pn', 'Planetary'], ['cl', 'Clusters']];
 const CAT = CATALOG.map((r, i) => ({ i, id: r[0], alt: r[1], name: r[2], t: r[3], ra: r[4], dec: r[5], maj: r[6], min: r[7] || r[6], pa: r[8] || 0, mag: r[9] }));
 const catKey = (s) => normId(s).toUpperCase().replace(/^(M|NGC|IC|B)\s*0*(\d)/, '$1 $2');
 const CAT_INDEX = new Map();
@@ -1752,7 +1752,7 @@ const indexCat = (o) => { for (const k of [o.id, ...o.alt.split(' · '), o.name]
 CAT.forEach(indexCat);
 
 // ---- Extra catalogs loaded live from VizieR (CDS) and cached: Lynds dark & bright nebulae, Green's supernova remnants ----
-const EXT_KEY = 'mrp.ext.v1', EXT_MAX_AGE = 90 * 864e5;
+const EXT_KEY = 'mrp.ext.v2', EXT_MAX_AGE = 90 * 864e5;
 // Supernova remnants that show up in amateur images (most of Green's catalogue is radio-only)
 const OPTICAL_SNR = { '74.0-8.5': 'Cygnus Loop', '180.0-1.7': 'Simeis 147', '189.1+3.0': 'IC 443 (Jellyfish)', '184.6-5.8': 'Crab Nebula',
   '263.9-3.3': 'Vela SNR', '260.4-3.4': 'Puppis A', '65.3+5.7': 'G65.3+5.7', '119.5+10.2': 'CTA 1', '132.7+1.3': 'HB 3',
@@ -1772,6 +1772,7 @@ async function vizierText(query, ms = 15000) {
       if (!r.ok) throw new Error('VizieR ' + r.status);
       const t = await r.text();
       if (/VOTable Error|not currently reachable|#INFO\s+Error/i.test(t.slice(0, 2000))) throw new Error('VizieR mirror database down');   // mirrors answer 200 with an error page
+      if (/#RESOURCE=\s*\n#Name:\s*\n/.test(t)) throw new Error('VizieR mirror returned no table');   // a sick mirror can also answer 200 with an empty, nameless result
       try { localStorage.setItem('mrp.viz', h); } catch {}
       return t;
     } catch (e) { err = e; } finally { clearTimeout(tm); }
@@ -1782,36 +1783,68 @@ async function vizier(src, cols) {
   const t = await vizierText(`-source=${src}&-out=${cols}&-out.max=3000&-oc.form=dec&-out.meta=-h-u-D`, 25000);
   return t.split('\n').filter((l) => l && !l.startsWith('#') && !l.startsWith('-')).map((l) => l.split('\t').map((x) => x.trim()));
 }
+// Extra catalogues, each fetched on its own so one service being down doesn't lose the others
+const EXT_SOURCES = {
+  ldn: () => vizier('VII/7A', '_RAJ2000,_DEJ2000,LDN,Area,Opacity,Barn'),
+  lbn: () => vizier('VII/9', '_RAJ2000,_DEJ2000,Seq,Diam1,Diam2,Color,Bright,Name'),
+  snr: () => vizier('VII/297', '_RAJ2000,_DEJ2000,SNR,MajDiam,MinDiam,type,Names'),
+  barnard: () => vizier('VII/220A/barnard', '_RAJ2000,_DEJ2000,Barn,Diam'),
+  vdb: () => vizier('VII/21', '_RAJ2000,_DEJ2000,VdB,Vmag,Type'),
+  ced: () => vizier('VII/231/catalog', '_RAJ2000,_DEJ2000,Ced,Name,Class,Dim1,Dim2'),
+  simbad: () => tap(`SELECT i.id, b.ra, b.dec, b.galdim_majaxis AS maj, b.galdim_minaxis AS mn, b.galdim_angle AS pa, f.V AS v FROM ident AS i JOIN basic AS b ON b.oid = i.oidref
+    LEFT JOIN allfluxes AS f ON f.oidref = b.oid WHERE i.id LIKE 'APG %' OR i.id LIKE 'PN A66 %' OR i.id LIKE 'HCG %'`, 30000),
+};
 async function fetchExtCatalogs() {
-  const [ldn, lbn, snr] = await Promise.all([
-    vizier('VII/7A', '_RAJ2000,_DEJ2000,LDN,Area,Opacity,Barn'),
-    vizier('VII/9', '_RAJ2000,_DEJ2000,Seq,Diam1,Diam2,Color,Bright,Name'),
-    vizier('VII/297', '_RAJ2000,_DEJ2000,SNR,MajDiam,MinDiam,type,Names')]);
-  const rows = [];
-  for (const [ra, dec, n, area, op, barn] of ldn) {           // darkest clouds only (opacity 5–6)
+  const keys = Object.keys(EXT_SOURCES), got = await Promise.allSettled(keys.map((k) => EXT_SOURCES[k]()));
+  const R = Object.fromEntries(keys.map((k, i) => [k, got[i].status === 'fulfilled' ? got[i].value : null]));
+  const failed = keys.filter((k) => !R[k]);
+  if (failed.length === keys.length) throw new Error('catalogues unreachable');
+  const rows = [], num = (x) => (x === '' || x == null ? NaN : +x);
+  for (const [ra, dec, n, area, op, barn] of R.ldn || []) {           // darkest clouds only (opacity 5–6)
     if (+op < 5 || +area < 0.005 || +dec < -60) continue;
     const d = +(2 * Math.sqrt(+area / Math.PI) * 60).toFixed(1);
     rows.push([`LDN ${n}`, barn ? barn.split(/\s+/).map((b) => 'B ' + b).join(' · ') : '', LDN_NAMES[n] || '', 'LDN', +ra, +dec, d, d, 0, null, +op]);
   }
-  for (const [ra, dec, n, d1, d2, color, br, name] of lbn) {    // brightness classes 1–3 (1 = brightest)
+  for (const [ra, dec, n, d1, d2, color, br, name] of R.lbn || []) {    // brightness classes 1–3 (1 = brightest)
     if (+br > 3 || +d1 < 5 || +dec < -60) continue;
     rows.push([`LBN ${n}`, name && /^S /.test(name) ? name.replace(/^S\s*/, 'Sh2-') : '', '', 'LBN', +ra, +dec, +d1, +d2 || +d1, 0, null, +br]);
   }
-  for (const [ra, dec, id, maj, min, , names] of snr) {
+  for (const [ra, dec, id, maj, min, , names] of R.snr || []) {
     const m = id.match(/G0*(\d+\.\d)([+-])0*(\d+\.\d)/); if (!m) continue;
     const key = `${m[1]}${m[2]}${m[3]}`; if (!OPTICAL_SNR[key]) continue;
     rows.push([`G${key}`, names || '', OPTICAL_SNR[key], 'SNR', +ra, +dec, +maj, +min || +maj, 0, null]);
   }
-  return rows;
+  for (const [ra, dec, n, d] of R.barnard || []) {                     // Barnard dark nebulae
+    if (+dec < -60 || !n) continue; const sz = num(d) > 0 ? +d : 5;
+    rows.push([`B ${n}`, '', '', 'DrkN', +ra, +dec, sz, sz, 0, null]);
+  }
+  for (const [ra, dec, n, v] of R.vdb || []) {                          // van den Bergh reflection nebulae (no sizes in the catalogue: ~6′)
+    if (!n) continue; rows.push([`vdB ${n}`, '', '', 'RfN', +ra, +dec, 6, 6, 0, num(v) || null]);
+  }
+  for (const [ra, dec, n, name, , d1, d2] of R.ced || []) {             // Cederblad bright diffuse nebulae, with sizes only
+    if (!(num(d1) > 0) || +dec < -60) continue;
+    rows.push([`Ced ${n}`, name && /^(NGC|IC)\s/.test(name) ? name : '', '', 'Neb', +ra, +dec, +d1, num(d2) > 0 ? +d2 : +d1, 0, null]);
+  }
+  for (const o of R.simbad || []) {                                     // Arp peculiar galaxies, Abell planetaries, Hickson compact groups
+    const m = String(o.id).match(/^(APG|PN A66|HCG)\s+(\d+)$/); if (!m || !Number.isFinite(o.ra)) continue;
+    const [id, t, d0] = m[1] === 'APG' ? [`Arp ${m[2]}`, 'G', 2] : m[1] === 'HCG' ? [`HCG ${m[2]}`, 'GGroup', 3] : [`Abell ${m[2]}`, 'PN', 1];
+    const maj = o.maj > 0 ? +(+o.maj).toFixed(2) : d0, mn = o.mn > 0 ? +(+o.mn).toFixed(2) : maj;
+    rows.push([id, '', '', t, +o.ra, +o.dec, maj, mn, Number.isFinite(o.pa) ? o.pa : 0, Number.isFinite(o.v) ? o.v : null]);
+  }
+  return { rows, partial: failed.length > 0 };
 }
 function addExtRows(rows) {
   const nebs = CAT.filter((o) => ['neb', 'snr', 'lbn', 'dark'].includes(TYPE_GROUP[o.t]));
   let added = 0;
   for (const r of rows) {
-    const o = { i: CAT.length, id: r[0], alt: r[1], name: r[2], t: r[3], ra: r[4], dec: r[5], maj: r[6], min: r[7], pa: 0, mag: null, ext: true };
+    const o = { i: CAT.length, id: r[0], alt: r[1], name: r[2], t: r[3], ra: r[4], dec: r[5], maj: r[6], min: r[7], pa: r[8] || 0, mag: r[9] ?? null, ext: true };
     // skip entries already covered by an NGC/IC/Sharpless object (same place, comparable size)
-    const dup = nebs.find((x) => x.t !== 'LDN' && o.t !== 'LDN' && angSep(o.ra, o.dec, x.ra, x.dec) * 60 < Math.max(6, 0.35 * o.maj) && x.maj >= 0.35 * o.maj && x.maj <= 3 * o.maj);
-    if (dup) { if (!dup.alt.includes(o.id)) dup.alt = dup.alt ? `${dup.alt} · ${o.id}` : o.id; if (o.t === 'SNR' && dup.t !== 'SNR') dup.t = 'SNR'; continue; }
+    const g = TYPE_GROUP[o.t];
+    let dup;
+    if (g === 'gal' || g === 'pn') dup = CAT.find((x) => TYPE_GROUP[x.t] === g && angSep(o.ra, o.dec, x.ra, x.dec) * 60 < Math.max(1, 0.4 * Math.max(o.maj, x.maj || 0)));
+    else if (o.t === 'DrkN') dup = nebs.find((x) => x.t === 'LDN' && x.alt.split(' · ').includes(o.id));
+    else dup = nebs.find((x) => x.t !== 'LDN' && o.t !== 'LDN' && angSep(o.ra, o.dec, x.ra, x.dec) * 60 < Math.max(6, 0.35 * o.maj) && x.maj >= 0.35 * o.maj && x.maj <= 3 * o.maj);
+    if (dup) { if (!dup.alt.split(' · ').includes(o.id)) { dup.alt = dup.alt ? `${dup.alt} · ${o.id}` : o.id; if (!CAT_INDEX.has(catKey(o.id))) CAT_INDEX.set(catKey(o.id), dup); } if (o.t === 'SNR' && dup.t !== 'SNR') dup.t = 'SNR'; continue; }
     CAT.push(o); indexCat(o); nebs.push(o); added++;
   }
   return added;
@@ -1824,8 +1857,9 @@ async function loadExtCatalogs(force) {
   if (!force && cached?.rows && Date.now() - cached.at < EXT_MAX_AGE) { if (extState !== 'done') { addExtRows(cached.rows); extState = 'done'; } scheduleTonight(); return; }
   extState = 'loading'; scheduleTonight();
   try {
-    const rows = await fetchExtCatalogs();
-    try { localStorage.setItem(EXT_KEY, JSON.stringify({ at: Date.now(), rows })); } catch {}
+    const { rows, partial } = await fetchExtCatalogs();
+    // a partial download is kept for a day only, so the missing catalogue is tried again soon
+    try { localStorage.setItem(EXT_KEY, JSON.stringify({ at: partial ? Date.now() - EXT_MAX_AGE + 864e5 : Date.now(), rows })); } catch {}
     addExtRows(rows); extState = 'done';
   } catch (e) {
     if (cached?.rows) { addExtRows(cached.rows); extState = 'done'; } else extState = 'failed';
@@ -5298,7 +5332,7 @@ function aiBuild() {
   const all = (tnCache?.items || []).filter((it) => keep.has(it.best.r.id));
   let items;
   if (style === 'gems') {   // leave out the famous ones and what's already imaged; send a wider list so the AI can pick the unusual
-    const gem = (it) => it.score - (it.c.name ? 1.2 : 0) + (/^(LDN|LBN|vdB|Abell|B |Barnard|Ced|Simeis|RCW|Gum|HB|VRO)/i.test(it.c.id) ? 0.4 : 0);
+    const gem = (it) => it.score - (it.c.name ? 1.2 : 0) + (/^(LDN|LBN|vdB|Abell|B |Barnard|Ced|Simeis|RCW|Gum|HB|VRO)/i.test(it.c.id) ? 0.4 : 0) + (/\b(Arp|HCG|Abell) \d/.test(it.c.id + ' ' + it.c.alt) ? 1 : 0);
     const groups = {};   // a mix of kinds (nebulae, galaxies, planetaries, remnants, dark nebulae…), best of each first
     for (const it of all.filter((x) => !x.done && !aiFamous(x.c)).sort((a, b) => gem(b) - gem(a))) (groups[TYPE_GROUP[it.c.t] || 'x'] ||= []).push(it);
     items = []; for (let k = 0; items.length < 45 && Object.values(groups).some((g) => g.length > k); k++) for (const g of Object.values(groups)) if (g[k] && items.length < 45) items.push(g[k]);
