@@ -1,6 +1,7 @@
 // fovplanner.com server: the static site (index.html) plus a small gallery API.
 // Images live in the R2 bucket bound as GALLERY; uploads need the UPLOAD_KEY secret;
-// plate solving goes through nova.astrometry.net with the ASTROMETRY_KEY secret.
+// plate solving goes through nova.astrometry.net with the ASTROMETRY_KEY secret;
+// AI session plans go through the Claude API with the ANTHROPIC_KEY secret (see planApi).
 
 const JSON_H = { 'content-type': 'application/json; charset=utf-8' };
 const json = (data, status = 200, extra = {}) => new Response(JSON.stringify(data), { status, headers: { ...JSON_H, ...extra } });
@@ -19,6 +20,7 @@ export default {
       if (p.startsWith('/hips/')) return await hipsTile(req, p);
       if (p.startsWith('/api/sync/')) return await syncApi(req, env, p);
       if (p === '/api/site' || p.startsWith('/api/site/')) return await siteApi(req, env, p, url);
+      if (p === '/api/plan' || p.startsWith('/api/plan/')) return await planApi(req, env, p);
     } catch (e) {
       return json({ error: e.message || String(e) }, e.status || 500);
     }
@@ -156,6 +158,111 @@ async function siteApi(req, env, p, url) {
     await env.GALLERY.delete([dataKey, `site/${id}.auth.json`]); return json({ ok: true }, 200, H);
   }
   fail('Method not allowed.', 405);
+}
+
+// ---- ✦ Plan my night: the planner's own numbers → Claude → a timed session plan ----
+// Test phase: only the site owner (upload key) and holders of a tester code (PLAN_CODES secret, comma-separated) may
+// use it, unless PLAN_OPEN = "1". Every plan is counted per day in R2 (ai/usage/YYYY-MM-DD.json) with its tokens, and
+// a daily cap (PLAN_DAILY_MAX, default 100) and a per-connection cap (PLAN_PER_IP, default 5) protect the API bill.
+const PLAN_MODEL = 'claude-haiku-5-5';
+const PRICE = { 'claude-haiku-5-5': [0.10, 0.50], 'claude-sonnet-5-5': [2, 10], 'claude-opus-5-5': [4, 20] };   // USD per million tokens in, out
+const PLAN_SYSTEM = `You are the session planner inside FOV Planner, a free astrophotography planning website.
+You receive JSON the planner has already calculated for one night at one site: the rigs the user is taking (each its own mount, running at the same time unless the user says otherwise), candidate deep-sky targets with the local times each is clear of the user's horizon and above their minimum altitude ("clear"), the hourly forecast (cloud % is the median of four weather models, cloud_spread is how much they disagree; seeing in arcseconds; gust and wind in km/h; dew_gap = temperature minus dew point in °C; moon_alt in degrees), the Moon, the Bortle class, and the user's wish list with notes.
+
+Make a practical, timed plan for the user's window.
+Rules:
+- Use only targets from "targets" or "wish_list", with their ids exactly as given. Never invent coordinates, rise or set times: every block must sit inside one of that target's "clear" windows and inside the user's window.
+- One target at a time per rig; prefer 1-2 long blocks per rig over many short ones (integration time matters). Leave ~10 min between blocks for slewing, plate solving and focus.
+- Put a target on a rig it suits ("best_rig" and "framing"); a mosaic needs proportionally more time, so only plan one when the hours allow it.
+- Moon: if moon_sensitive is true, schedule it when the Moon is down or far away. Narrowband and dual-band filters cope with moonlight; broadband (L, RGB, UV/IR-cut) does not.
+- Bortle 7-9: favour emission nebulae with narrowband or dual-band filters.
+- Avoid hours with high cloud or rain; if cloud_spread is large, say the forecast is uncertain. If gust exceeds a rig's wind_limit_kmh, warn or move that rig to a sheltered/smaller target. When dew_gap is under 3, tell them to raise dew heaters.
+- Give filter and a sensible sub length for each block from the camera (mono/colour), filter type, f-ratio and sky brightness (e.g. narrowband 180-600 s, dual-band on colour 180-300 s, broadband 30-180 s under bright skies). Mention gain only in general terms ("unity gain"). Note a meridian flip when a block spans the time the target is highest.
+- Respect the user's request ("ask") when it does not break these rules. Prefer wish-list targets when they fit well. Skip targets marked already_imaged unless asked.
+- If the night is clouded out or nothing fits, say so plainly and give the best fallback (e.g. the clearest hours, or calibration frames).
+- Plain, friendly language; short sentences; no markdown. Times as HH:MM local, as in the data.
+Return only the JSON object described by the schema.`;
+const PLAN_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['summary', 'blocks', 'before', 'during', 'after'],
+  properties: {
+    summary: { type: 'string', description: 'Two or three sentences: the verdict for the night and the overall plan.' },
+    blocks: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['rig', 'start', 'end', 'target', 'target_name', 'filter', 'exposure', 'framing', 'why'],
+      properties: { rig: { type: 'string', description: 'Rig id letter from the data' }, start: { type: 'string' }, end: { type: 'string' },
+        target: { type: 'string', description: 'Target id exactly as given' }, target_name: { type: 'string' },
+        filter: { type: 'string' }, exposure: { type: 'string', description: 'e.g. 300 s subs, ~30 subs' }, framing: { type: 'string', description: 'single frame or mosaic grid, rotation hint' },
+        why: { type: 'string', description: 'One sentence: why this target at this time' } } } },
+    before: { type: 'array', items: { type: 'string' }, description: 'Setup tips before starting (max 4)' },
+    during: { type: 'array', items: { type: 'string' }, description: 'Things to watch during the night: weather, dew, flips (max 4)' },
+    after: { type: 'array', items: { type: 'string' }, description: 'Calibration and pack-up (max 3)' },
+  },
+};
+async function planApi(req, env, p) {
+  const H = { 'cache-control': 'no-store' };
+  const owner = await authorised(req, env);
+  const codes = (env.PLAN_CODES || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const code = (req.headers.get('x-plan-code') || '').trim();
+  const tester = !!code && codes.includes(code);
+  const allowed = owner || tester || env.PLAN_OPEN === '1';
+  const model = env.PLAN_MODEL || PLAN_MODEL;
+  const dailyMax = +env.PLAN_DAILY_MAX || 100, perIp = +env.PLAN_PER_IP || 5;
+  const day = new Date().toISOString().slice(0, 10), usageKey = `ai/usage/${day}.json`;
+  const ip = await (async () => hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('fovplanner-ip:' + (req.headers.get('cf-connecting-ip') || '')))).slice(0, 16))();
+  const readUsage = async (k) => { const o = env.GALLERY && await env.GALLERY.get(k); return o ? await o.json() : { n: 0, in: 0, out: 0, cacheIn: 0, usd: 0, ips: {} }; };
+  const monthUsage = async () => {
+    const list = await env.GALLERY.list({ prefix: `ai/usage/${day.slice(0, 7)}` }), m = { n: 0, usd: 0 };
+    for (const o of list.objects) { const u = await readUsage(o.key); m.n += u.n; m.usd += u.usd || 0; }
+    return m;
+  };
+  const usageView = async (u) => owner ? { today: { n: u.n, usd: u.usd || 0 }, month: await monthUsage(), dailyMax } : undefined;
+  if (p === '/api/plan/status' && req.method === 'GET') {
+    if (!allowed) return json({ allowed: false, test: true }, 200, H);
+    if (!env.ANTHROPIC_KEY) return json({ allowed: false, error: 'not set up' }, 200, H);
+    const u = await readUsage(usageKey);
+    return json({ allowed: true, model, left: owner ? null : Math.max(0, perIp - (u.ips?.[ip] || 0)), usage: await usageView(u) }, 200, H);
+  }
+  if (p !== '/api/plan' || req.method !== 'POST') fail('Not found.', 404);
+  if (!allowed) fail('AI planning is in a test phase and not open yet.', 403);
+  if (!env.ANTHROPIC_KEY) fail('AI planning is not set up (ANTHROPIC_KEY secret missing).', 503);
+  if (!env.GALLERY) fail('Storage (R2 bucket) is not connected.', 503);
+  const body = await req.text(); if (body.length > 60000) fail('Too much data for one plan.', 413);
+  let b; try { b = JSON.parse(body); } catch { fail('Bad request.'); }
+  if (!b || typeof b.data !== 'object') fail('Bad request.');
+  const u = await readUsage(usageKey);
+  if (u.n >= dailyMax && !owner) fail('The AI planner has reached today\'s limit. Please try again tomorrow.', 429);
+  if (!owner && (u.ips?.[ip] || 0) >= perIp) return json({ error: `You have used today's ${perIp} plans. More tomorrow!`, left: 0 }, 429, H);
+  const user = `Tonight's data:\n${JSON.stringify(b.data)}\n\nUser's request: ${String(b.ask || '').slice(0, 400) || '(none: make the best plan)'}`;
+  const call = async (structured) => fetch(env.ANTHROPIC_URL || 'https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_KEY, 'anthropic-version': env.ANTHROPIC_VERSION || '2023-06-01' },
+    body: JSON.stringify({
+      model, max_tokens: 2000,
+      system: [{ type: 'text', text: PLAN_SYSTEM + (structured ? '' : '\n\nJSON schema:\n' + JSON.stringify(PLAN_SCHEMA)), cache_control: { type: 'ephemeral' } }],
+      messages: [{ role: 'user', content: user }],
+      ...(structured ? { output_config: { format: { type: 'json_schema', schema: PLAN_SCHEMA } } } : {}),
+    }),
+  });
+  let r = await call(true);
+  if (r.status === 400) { const t = await r.text(); if (/output_config|json_schema|format/i.test(t)) r = await call(false); else fail('The AI service refused the request: ' + t.slice(0, 200), 502); }
+  if (r.status === 429 || r.status === 529) fail('The AI service is busy. Try again in a minute.', 503);
+  if (!r.ok) fail(`The AI service answered ${r.status}.`, 502);
+  const j = await r.json();
+  const text = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
+  let plan; try { plan = JSON.parse(text); } catch { const m = text.match(/\{[\s\S]*\}/); try { plan = m && JSON.parse(m[0]); } catch {} }
+  if (!plan || !Array.isArray(plan.blocks)) fail('The AI answer could not be read. Please try again.', 502);
+  // keep only what the page renders
+  const str = (x, n = 300) => (typeof x === 'string' ? x.slice(0, n) : '');
+  plan = { summary: str(plan.summary, 800), blocks: plan.blocks.slice(0, 12).map((x) => ({ rig: str(x.rig, 4), start: str(x.start, 5), end: str(x.end, 5), target: str(x.target, 60),
+    target_name: str(x.target_name, 80), filter: str(x.filter, 80), exposure: str(x.exposure, 80), framing: str(x.framing, 120), why: str(x.why, 300) })),
+    before: (plan.before || []).slice(0, 5).map((x) => str(x)), during: (plan.during || []).slice(0, 5).map((x) => str(x)), after: (plan.after || []).slice(0, 4).map((x) => str(x)) };
+  // count it
+  const us = j.usage || {}, [pin, pout] = PRICE[model] || PRICE[PLAN_MODEL];
+  const inTok = (us.input_tokens || 0) + (us.cache_creation_input_tokens || 0) * 1.25, cacheTok = us.cache_read_input_tokens || 0;
+  const usd = (inTok * pin + cacheTok * pin * 0.1 + (us.output_tokens || 0) * pout) / 1e6;
+  const u2 = await readUsage(usageKey);   // re-read: another plan may have finished meanwhile
+  u2.n++; u2.in += us.input_tokens || 0; u2.cacheIn += cacheTok; u2.out += us.output_tokens || 0; u2.usd = (u2.usd || 0) + usd;
+  u2.ips = u2.ips || {}; if (!owner) u2.ips[ip] = (u2.ips[ip] || 0) + 1;
+  await env.GALLERY.put(usageKey, JSON.stringify(u2), { httpMetadata: { contentType: 'application/json' } });
+  return json({ plan, left: owner ? null : Math.max(0, perIp - (u2.ips[ip] || 0)), usage: await usageView(u2) }, 200, H);
 }
 
 function fail(msg, status = 400) { const e = new Error(msg); e.status = status; throw e; }
