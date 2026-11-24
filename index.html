@@ -234,6 +234,7 @@
     #surveyCredit { top: auto; bottom: 8px; right: 8px; }
     #hud { display: none; }
     #legend { left: 8px; right: 8px; bottom: 44px; font-size: 11px; }
+    #legend.collapsed { left: auto; }
     #legend div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
     #legend i { vertical-align: middle; margin-right: 4px; }
   }
@@ -243,7 +244,12 @@
   .img-row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
   .img-row input[type=range] { flex: 1; accent-color: var(--accent); }
   .img-row .tag { font-weight: 500; }
-  #legend { position: absolute; right: 10px; bottom: 44px; background: rgba(10,13,20,.78); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12px; z-index: 20; pointer-events: none; }
+  #legend { position: absolute; right: 10px; bottom: 44px; background: rgba(10,13,20,.78); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12px; z-index: 20; cursor: pointer; user-select: none; }
+  #legend .lghead { display: flex; justify-content: space-between; gap: 12px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 2px; }
+  #legend .lghead span { text-transform: none; letter-spacing: 0; }
+  #legend.collapsed { padding: 4px 9px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  #legend .lgsw { display: inline-flex; gap: 3px; }
+  #legend .lgsw i { width: 10px; height: 10px; border-radius: 2px; }
   #legend div { display: flex; align-items: center; gap: 6px; }
   #legend i { width: 14px; height: 3px; background: var(--c); display: inline-block; border-radius: 2px; }
   #altChart { width: 100%; height: 150px; display: block; }
@@ -1182,9 +1188,16 @@ function updateLegend() {
     const mos = r.cols * r.rows > 1 ? ` · ${r.cols}×${r.rows}` : '';
     return `<div style="--c:${r.color}"><i></i>${esc(g.s.name)} + ${esc(g.c.name)} — ${fmtAngle(g.mw)} × ${fmtAngle(g.mh)}${mos}</div>`;
   });
-  $('#legend').innerHTML = rows.join('');
-  $('#legend').style.display = rows.length ? '' : 'none';
+  const el = $('#legend'), list = rows.filter(Boolean), open = legendOpen();
+  el.classList.toggle('collapsed', !open);
+  el.title = open ? 'Hide the rig list' : 'Show the rig list';
+  el.innerHTML = open ? `<div class="lghead">Rigs <span>▾ hide</span></div>${list.join('')}`
+    : `<span class="lgsw">${state.rigs.filter((r) => r.on && rigGeom(r)).map((r) => `<i style="--c:${r.color}"></i>`).join('')}</span> ${list.length} rig${list.length === 1 ? '' : 's'} ▴`;
+  el.style.display = list.length ? '' : 'none';
 }
+// the rig list on the map: open by default on wide screens, folded to a small chip on phones; the choice is remembered
+function legendOpen() { try { const v = localStorage.getItem('mrp.legend'); if (v != null) return v === '1'; } catch {} return !window.matchMedia('(max-width: 600px)').matches; }
+$('#legend').addEventListener('click', (e) => { e.stopPropagation(); try { localStorage.setItem('mrp.legend', legendOpen() ? '0' : '1'); } catch {} updateLegend(); });
 
 /* ---------- Faint-detail boost (stretch the survey) ---------- */
 // Sky survey choice. "auto" = narrowband (NSNS) for emission targets in its northern coverage, DSS color otherwise
