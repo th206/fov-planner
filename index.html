@@ -101,6 +101,12 @@
   .wishrow { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-top: 1px solid var(--line); cursor: pointer; }
   .wishrow:first-child { border-top: none; }
   .wishrow .wmain { flex: 1; min-width: 0; }
+  .mstrip { display: inline-flex; gap: 2px; margin: 3px 6px 1px 0; vertical-align: middle; }
+  .mstrip i { width: 15px; height: 14px; border-radius: 3px; font: 600 9px/14px system-ui; font-style: normal; text-align: center; color: #0b0f1a;
+    background: color-mix(in srgb, var(--good) calc(var(--h) * 100%), #2a3446); }
+  .mstrip i.lo { color: var(--muted); }
+  .mstrip i.now { outline: 1px solid var(--text); outline-offset: 0; }
+  .mstrip i.sel { outline: 2px solid var(--accent); outline-offset: 0; }
   .wishrow.loaded .wmain b { color: var(--accent); }
   .wishrow button { flex: none; }
   .wnote { margin-top: 3px; font-size: 12px; color: var(--text); opacity: .85; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -565,6 +571,9 @@
 
     <section data-tab="tonight" class="card" id="wishCard">
       <h2>Wish list <span class="note" id="wishFor" style="text-transform:none;letter-spacing:0"></span></h2>
+      <div class="row note" id="wishView" style="margin:2px 0 6px;gap:6px" hidden>Show for
+        <select id="wishMonth"><option value="">this night</option><option value="0">January</option><option value="1">February</option><option value="2">March</option><option value="3">April</option><option value="4">May</option><option value="5">June</option><option value="6">July</option><option value="7">August</option><option value="8">September</option><option value="9">October</option><option value="10">November</option><option value="11">December</option></select>
+        <span id="wishMonthNote"></span></div>
       <div id="wishList" class="note">Tap <b>☆ Wish list</b> on any target (Frame tab) to keep it here for planning.</div>
     </section>
 
@@ -2007,18 +2016,44 @@ function wishMark() {
   ta.hidden = !w; if (w) { ta.dataset.wnote = w.key; if (document.activeElement !== ta) ta.value = w.note || ''; } else delete ta.dataset.wnote;
 }
 let wishEditing = null;
+// usable dark hours on the 15th of each calendar month (Jan…Dec) from this site, above the minimum altitude and clear of the horizon
+const monthCache = new Map();
+function monthHours(ra, dec) {
+  const { lat, lon, tz } = state.site, hz = siteHorizon(), key = [ra.toFixed(3), dec.toFixed(3), lat.toFixed(2), lon.toFixed(2), state.tn.minAlt || 30, hz ? JSON.stringify(hz.pts || hz) : ''].join('|');
+  if (monthCache.has(key)) return monthCache.get(key);
+  const y = new Date().getUTCFullYear(), out = Array.from({ length: 12 }, (_, m) => usableHours(ra, dec, Date.UTC(y, m, 15, 16) - tz * 3600e3, 20 * 60e3).h);
+  monthCache.set(key, out); return out;
+}
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function bestMonthsText(mh) {   // "Oct–Nov · 8.5 h" : the months within 10% of the best
+  const mx = Math.max(...mh); if (mx < 0.5) return 'not usable from here';
+  const good = mh.map((h, i) => h >= mx * 0.9 ? i : -1).filter((i) => i >= 0);
+  // group consecutive months (wrapping Dec→Jan)
+  const runs = []; for (const i of good) { const r = runs.find((r) => (r[1] + 1) % 12 === i); if (r) r[1] = i; else runs.push([i, i]); }
+  if (runs.length > 1 && runs[runs.length - 1][1] === 11 && runs[0][0] === 0) { runs[0][0] = runs.pop()[0]; }
+  return runs.map(([a, b]) => a === b ? MON[a] : `${MON[a]}–${MON[b]}`).join(', ') + ` · ${mx.toFixed(1)} h`;
+}
+function monthStrip(mh, sel) {
+  const mx = 10, now = new Date(Date.now() + state.site.tz * 3600e3).getUTCMonth();
+  return `<span class="mstrip">${mh.map((h, i) => `<i style="--h:${Math.min(1, h / mx).toFixed(2)}" class="${h < 2.5 ? 'lo' : ''}${i === now ? ' now' : ''}${i === sel ? ' sel' : ''}" title="${MON[i]}: ${h.toFixed(1)} h of dark sky">${MON[i][0]}</i>`).join('')}</span>`;
+}
 function renderWish() {
   const box = $('#wishList'); if (!box) return;
   const d = $('#night').value;
   $('#wishFor').textContent = d ? `· night of ${new Date(d + 'T12:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}` : '';
   if (!state.wish.length) { box.innerHTML = 'Tap <b>☆ Wish list</b> on any target (Frame tab) to keep it here for planning. Pick another night in the Moon strip (Sky tab) to plan ahead.'; return; }
   const { t0 } = nightWindow(), cur = state.target ? wishKey(state.target) : '';
-  const rows = state.wish.map((w) => ({ w, u: usableHours(w.t.ra, w.t.dec, t0) })).sort((a, b) => b.u.h - a.u.h);
-  box.innerHTML = rows.map(({ w, u }) => {
+  $('#wishView').hidden = false;
+  const selM = $('#wishMonth').value === '' ? null : +$('#wishMonth').value;
+  const rows = state.wish.map((w) => ({ w, u: usableHours(w.t.ra, w.t.dec, t0), mh: monthHours(w.t.ra, w.t.dec) }))
+    .sort((a, b) => (selM == null ? b.u.h - a.u.h : b.mh[selM] - a.mh[selM]));
+  $('#wishMonthNote').textContent = selM == null ? '' : `· best first; ${rows.filter((r) => r.mh[selM] >= 2).length} of ${rows.length} have 2 h+ in ${MON[selM]}`;
+  box.innerHTML = rows.map(({ w, u, mh }) => {
     const sz = w.size?.maj ? ` · ${w.size.maj >= 60 ? (w.size.maj / 60).toFixed(1) + '°' : Math.round(w.size.maj) + '′'}` : '';
-    const tag = u.h >= 2 ? `<span class="tag good">${u.h.toFixed(1)} h</span> ${hhmms(u.first)}–${hhmms(u.last)}` : u.h >= 0.5 ? `<span class="tag warn">${u.h.toFixed(1)} h</span> ${hhmms(u.first)}–${hhmms(u.last)}` : '<span class="tag bad">not up this night</span>';
+    const mHere = selM != null ? mh[selM] : null;
+    const tag = selM != null ? `<span class="tag ${mHere >= 4 ? 'good' : mHere >= 2 ? 'warn' : 'bad'}">${mHere.toFixed(1)} h in ${MON[selM]}</span>` : u.h >= 2 ? `<span class="tag good">${u.h.toFixed(1)} h</span> ${hhmms(u.first)}–${hhmms(u.last)}` : u.h >= 0.5 ? `<span class="tag warn">${u.h.toFixed(1)} h</span> ${hhmms(u.first)}–${hhmms(u.last)}` : '<span class="tag bad">not up this night</span>';
     return `<div class="wishrow ${w.key === cur ? 'loaded' : ''}" data-wish="${esc(w.key)}">
-      <div class="wmain"><b>${esc(normId(w.t.mainId || w.t.name))}</b> <span class="note">${esc(w.t.typeDesc || '')}${sz} · best ${bestMonth(w.t.ra)}</span><br>${tag}
+      <div class="wmain"><b>${esc(normId(w.t.mainId || w.t.name))}</b> <span class="note">${esc(w.t.typeDesc || '')}${sz}</span><br>${tag}<br>${monthStrip(mh, selM)}<span class="note">best ${bestMonthsText(mh)}</span>
         ${w.note ? `<div class="wnote">${esc(w.note)}</div>` : ''}
         ${wishEditing === w.key ? `<textarea class="wishnote" data-wnote="${esc(w.key)}" rows="3" placeholder="Filters, exposure, framing ideas, what to fix next time…">${esc(w.note || '')}</textarea>` : ''}</div>
       <button type="button" class="icon ghost" data-wact="note" title="${w.note ? 'Edit the note' : 'Add a note'}">✎</button>
@@ -2038,6 +2073,8 @@ function wishLoad(k, go) {
   renderWish();
 }
 $('#wishBtn').addEventListener('click', wishToggle);
+{ const sel = $('#wishMonth'); try { sel.value = localStorage.getItem('mrp.wishMonth') ?? ''; } catch {}
+  sel.addEventListener('change', () => { try { localStorage.setItem('mrp.wishMonth', sel.value); } catch {} renderWish(); }); }
 // notes: typed in the wish list or on the target card, saved as you type
 function wishSetNote(k, v) { const w = state.wish.find((x) => x.key === k); if (!w) return; w.note = v.slice(0, 2000); clearTimeout(wishSetNote.t); wishSetNote.t = setTimeout(saveStore, 400); }
 document.addEventListener('input', (e) => {
