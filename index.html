@@ -954,7 +954,7 @@ const state = {
   windBias: null,
   filters: saved.filters || [],
   boost: saved.boost ?? 30,
-  tn: { rig: 'any', types: ['gal', 'neb', 'snr', 'pn'], minAlt: 30, minFill: 15, minFillPn: 3, maxPanels: 4, avoidMoon: true, sort: 'best', ...(saved.tn || {}) },
+  tn: { rig: 'any', types: ['gal', 'grp', 'neb', 'snr', 'pn'], minAlt: 30, minFill: 15, minFillPn: 3, maxPanels: 4, avoidMoon: true, sort: 'best', ...(saved.tn || {}) },
   fcSeeing: null,
   target: null,          // {name, ra, dec, ...}
   size: null,            // {maj, min, pa} arcmin
@@ -963,6 +963,7 @@ const state = {
 state.site = { ...state.defaultSite };
 if (!state.places) state.places = [{ ...state.defaultSite }];
 if (!state.tn.v2) { if (!state.tn.types.includes('snr')) state.tn.types.push('snr'); state.tn.v2 = true; }   // SNRs became their own category
+if (!state.tn.v3) { if (state.tn.types.includes('gal') && !state.tn.types.includes('grp')) state.tn.types.push('grp'); state.tn.v3 = true; }   // galaxy pairs, triplets and groups got their own category
 const scopeById = (id) => state.scopes.find((s) => s.id === id);
 /* Wind tolerance: wind load grows with tube size, and the guiding error that matters shrinks with focal length.
    A rough starting point (km/h of gusts) that users refine from experience: 10" f/4 ≈ 20, 6" f/4 ≈ 30, small refractor ≈ 40. */
@@ -1763,10 +1764,10 @@ const CATALOG = [["IC 10","","","G",5.0723,59.3038,6.8,6.0,129,10.3],["IC 59",""
 const TYPE_NAMES = { G: 'Galaxy', GPair: 'Galaxy pair', GTrpl: 'Galaxy triplet', GGroup: 'Galaxy group', HII: 'HII region', EmN: 'Emission nebula',
   Neb: 'Nebula', RfN: 'Reflection nebula', SNR: 'Supernova remnant', 'Cl+N': 'Cluster + nebula', DrkN: 'Dark nebula', PN: 'Planetary nebula',
   OCl: 'Open cluster', GCl: 'Globular cluster', Sh2: 'HII region (Sharpless)', LDN: 'Dark nebula (Lynds)', LBN: 'Bright nebula (Lynds)' };
-const TYPE_GROUP = { G: 'gal', GPair: 'gal', GTrpl: 'gal', GGroup: 'gal', HII: 'neb', EmN: 'neb', Neb: 'neb', RfN: 'neb', 'Cl+N': 'neb', Sh2: 'neb',
+const TYPE_GROUP = { G: 'gal', GPair: 'grp', GTrpl: 'grp', GGroup: 'grp', HII: 'neb', EmN: 'neb', Neb: 'neb', RfN: 'neb', 'Cl+N': 'neb', Sh2: 'neb',
   LBN: 'lbn', SNR: 'snr', DrkN: 'dark', LDN: 'dark', PN: 'pn', OCl: 'cl', GCl: 'cl' };
 const BROADBAND = new Set(['G', 'GPair', 'GTrpl', 'GGroup', 'RfN', 'DrkN', 'LDN', 'OCl', 'GCl']);   // hurt most by moonlight
-const GROUPS = [['gal', 'Galaxies'], ['neb', 'Nebulae'], ['lbn', 'LBN'], ['dark', 'Dark nebulae'], ['snr', 'Supernova remnants'], ['pn', 'Planetary'], ['cl', 'Clusters']];
+const GROUPS = [['gal', 'Galaxies'], ['grp', 'Galaxy groups'], ['neb', 'Nebulae'], ['lbn', 'LBN'], ['dark', 'Dark nebulae'], ['snr', 'Supernova remnants'], ['pn', 'Planetary'], ['cl', 'Clusters']];
 const CAT = CATALOG.map((r, i) => ({ i, id: r[0], alt: r[1], name: r[2], t: r[3], ra: r[4], dec: r[5], maj: r[6], min: r[7] || r[6], pa: r[8] || 0, mag: r[9] }));
 const catKey = (s) => normId(s).toUpperCase().replace(/^(M|NGC|IC|B)\s*0*(\d)/, '$1 $2');
 const CAT_INDEX = new Map();
@@ -1863,7 +1864,7 @@ function addExtRows(rows) {
     // skip entries already covered by an NGC/IC/Sharpless object (same place, comparable size)
     const g = TYPE_GROUP[o.t];
     let dup;
-    if (g === 'gal' || g === 'pn') dup = CAT.find((x) => TYPE_GROUP[x.t] === g && angSep(o.ra, o.dec, x.ra, x.dec) * 60 < Math.max(1, 0.4 * Math.max(o.maj, x.maj || 0)));
+    if (g === 'gal' || g === 'grp' || g === 'pn') dup = CAT.find((x) => TYPE_GROUP[x.t] === g && angSep(o.ra, o.dec, x.ra, x.dec) * 60 < Math.max(1, 0.4 * Math.max(o.maj, x.maj || 0)));
     else if (o.t === 'DrkN') dup = nebs.find((x) => x.t === 'LDN' && x.alt.split(' · ').includes(o.id));
     else dup = nebs.find((x) => x.t !== 'LDN' && o.t !== 'LDN' && angSep(o.ra, o.dec, x.ra, x.dec) * 60 < Math.max(6, 0.35 * o.maj) && x.maj >= 0.35 * o.maj && x.maj <= 3 * o.maj);
     if (dup) { if (!dup.alt.split(' · ').includes(o.id)) { dup.alt = dup.alt ? `${dup.alt} · ${o.id}` : o.id; if (!CAT_INDEX.has(catKey(o.id))) CAT_INDEX.set(catKey(o.id), dup); } if (o.t === 'SNR' && dup.t !== 'SNR') dup.t = 'SNR'; continue; }
@@ -1988,7 +1989,7 @@ function computeTonight() {
   }
   // "Best tonight": enough hours (5 h+ is plenty), a good fit, and well-known/bright targets first
   const notable = (c) => (c.name ? 1.5 : 0) + (/^M \d/.test(c.id) || /Caldwell/.test(c.alt) || /Caldwell/.test(c.id) ? 1 : 0)
-    + (TYPE_GROUP[c.t] === 'gal' && c.mag != null ? Math.max(0, Math.min(1.5, (11 - c.mag) / 2)) : 0);
+    + (['gal', 'grp'].includes(TYPE_GROUP[c.t]) && c.mag != null ? Math.max(0, Math.min(1.5, (11 - c.mag) / 2)) : 0);
   const fitScore = (f) => (f.kind === 'fits' ? 1.2 - Math.abs(f.fill - 0.6) * 1.5 : 0.6 - 0.15 * f.panels);
   for (const it of items) it.score = Math.min(it.hours, 5) * 0.9 + notable(it.c) + fitScore(it.best.f) + Math.max(0, it.peak - 40) / 50 - (it.best.swap ? 0.8 : 0) - (it.done ? 4 : 0);   // already in your gallery: much lower
   const by = { best: (a, b) => b.score - a.score, hours: (a, b) => b.hours - a.hours || b.peak - a.peak, fit: (a, b) => fitRank(b.best.f) - fitRank(a.best.f) || b.hours - a.hours,
