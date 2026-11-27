@@ -541,7 +541,9 @@
           <label class="note">From <input id="aiFrom" type="time" autocomplete="off"></label>
           <label class="note">to <input id="aiTo" type="time" autocomplete="off"></label>
         </div>
-        <div id="aiRigs" class="airigs"></div>
+        <label class="note" style="display:flex;align-items:center;gap:6px;margin:6px 0 4px">Rig <select id="aiRigSel" style="flex:1;min-width:0"></select></label>
+        <div id="aiRigs" class="airigs" hidden></div>
+        <div class="note" style="font-size:11.5px;margin:-2px 0 6px">Pick the rig you are setting up tonight. The filter set on the rig (Frame → open the rig → Filter) tells the AI whether it can shoot narrowband; candidates use the type, altitude and fill filters under Tonight's targets.</div>
         <label class="note" style="display:flex;align-items:center;gap:6px;margin:2px 0 6px">Targets
           <select id="aiStyle" style="flex:1;min-width:0"><option value="best">Best for tonight</option><option value="gems">Hidden gems: striking, rarely photographed</option><option value="popular">Showpieces</option></select></label>
         <textarea id="aiAsk" class="wishnote" rows="2" maxlength="400" placeholder="Anything else? e.g. “something I haven't shot before”, “I have an L-eNhance”, “must pack up by 2”"></textarea>
@@ -1937,7 +1939,7 @@ function doneIndex() {
     return null;
   };
 }
-function computeTonight() {
+function computeTonight(rigIds) {   // rigIds: plan for exactly these rigs (the AI planner), otherwise the Tonight selector
   const doneOf = doneIndex();
   const { lat, lon, tz } = state.site, { t0, t1 } = nightWindow(), o = state.tn;
   const dt = 10 * 60e3, steps = [];
@@ -1951,7 +1953,7 @@ function computeTonight() {
   const mid = (t0 + t1) / 2, [sr, sd] = sunRaDec(mid), [mr, md] = moonRaDec(mid);
   const illum = (1 - Math.cos(angSep(sr, sd, mr, md) * D2R)) / 2;
   const moonUpHours = steps.filter((s) => s.moonUp).length * dt / 3600e3;
-  const rigs = state.rigs.filter((r) => (o.rig === 'any' ? r.on : r.id === o.rig)).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g);
+  const rigs = state.rigs.filter((r) => (rigIds ? rigIds.includes(r.id) : o.rig === 'any' ? r.on : r.id === o.rig)).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g);
   const opt = { minFill: o.minFill, maxPanels: o.maxPanels }, optPn = { ...opt, minFill: o.minFillPn ?? 3 };   // planetaries: own limit (faint halos)
   const items = [], why = { small: 0, low: 0, hours: 0, tiny: 0 }, hz = siteHorizon();
   for (const c of CAT) {
@@ -5362,8 +5364,15 @@ function renderAi() {
     const T = nightTimes();
     if (!$('#aiFrom').value && T.darkA) $('#aiFrom').value = aiLocalTime(T.darkA);
     if (!$('#aiTo').value && T.darkB) $('#aiTo').value = aiLocalTime(T.darkB);
-    const rigs = state.rigs.filter((r) => rigGeom(r));
+    const rigs = state.rigs.filter((r) => rigGeom(r)), sel = $('#aiRigSel');
+    let want = sel.value; if (!want) { try { want = localStorage.getItem('mrp.airig') || ''; } catch {} }
+    if (want !== 'multi' && !rigs.some((r) => r.id === want)) want = (rigs.find((r) => r.on) || rigs[0])?.id || '';
+    sel.innerHTML = rigs.map((r) => { const g = rigGeom(r), f = filterById(r.filter);
+      return `<option value="${esc(r.id)}">${esc(g.s.name)} + ${esc(g.c.name)}${f ? ` · ${esc(f.name)}` : ' · no filter set'}</option>`; }).join('')
+      + (rigs.length > 1 ? '<option value="multi">Several rigs at once…</option>' : '');
+    sel.value = want;
     const prev = new Set([...card.querySelectorAll('#aiRigs input:checked')].map((i) => i.value));
+    $('#aiRigs').hidden = want !== 'multi';
     $('#aiRigs').innerHTML = rigs.map((r) => { const g = rigGeom(r), on = prev.size ? prev.has(r.id) : r.on;
       return `<label><input type="checkbox" value="${esc(r.id)}" ${on ? 'checked' : ''}><span class="rigdot" style="--c:${r.color}"></span>${esc(g.s.name)} + ${esc(g.c.name)}</label>`; }).join('');
   }
@@ -5391,9 +5400,9 @@ function aiBuild() {
   const T = nightTimes(), tz = state.site.tz, hz = siteHorizon(), minAlt = state.tn.minAlt || 30;
   const from = aiParseTime($('#aiFrom').value) ?? T.darkA, to = aiParseTime($('#aiTo').value) ?? T.darkB;
   if (!(from && to && to > from)) return { error: 'Pick a time window inside tonight.' };
-  const ids = [...document.querySelectorAll('#aiRigs input:checked')].map((i) => i.value);
+  const rs = $('#aiRigSel').value, ids = rs && rs !== 'multi' ? [rs] : [...document.querySelectorAll('#aiRigs input:checked')].map((i) => i.value);
   const rigs = state.rigs.filter((r) => ids.includes(r.id)).map((r) => ({ r, g: rigGeom(r) })).filter((x) => x.g);
-  if (!rigs.length) return { error: 'Tick at least one rig.' };
+  if (!rigs.length) return { error: 'Pick a rig (or tick at least one).' };
   aiRigIds = {}; const letter = (i) => String.fromCharCode(65 + i);
   const rigOut = rigs.map(({ r, g }, i) => { aiRigIds[letter(i)] = r.id; const f = filterById(r.filter), kind = camKind(g.c);
     return { id: letter(i), name: `${g.s.name} + ${g.c.name}`, focal_mm: Math.round(g.fl), f_ratio: g.fr ? +g.fr.toFixed(1) : null, aperture_mm: g.s.ap || null,
@@ -5401,7 +5410,7 @@ function aiBuild() {
       filter: f ? `${f.name} (${(FILTER_TYPES.find(([k]) => k === f.type) || [, f.type])[1]})` : 'none set', mosaic_now: r.cols * r.rows > 1 ? `${r.cols}x${r.rows}` : null, wind_limit_kmh: windLimit(g.s) }; });
   // targets: tonight's list for these rigs (current filters), best 25
   const style = $('#aiStyle')?.value || 'best', keep = new Set(ids);
-  const all = (tnCache?.items || []).filter((it) => keep.has(it.best.r.id));
+  const all = computeTonight(ids).items;   // tonight's candidates for exactly the ticked rigs (Tonight's type, altitude and fill filters apply)
   let items;
   if (style === 'gems') {   // leave out the famous ones and what's already imaged; send a wider list so the AI can pick the unusual
     const gem = (it) => it.score - (it.c.name ? 1.2 : 0) + (/^(LDN|LBN|vdB|Abell|B |Barnard|Ced|Simeis|RCW|Gum|HB|VRO)/i.test(it.c.id) ? 0.4 : 0) + (/\b(Arp|HCG|Abell) \d/.test(it.c.id + ' ' + it.c.alt) ? 1 : 0);
@@ -5441,7 +5450,7 @@ function aiBuild() {
 async function aiRun() {
   if (aiBusy) return;
   const b = aiBuild(); if (b.error) { $('#aiMsg').textContent = b.error; return; }
-  if (!b.data.targets.length && !b.data.wish_list.length) { $('#aiMsg').textContent = 'No targets suit these rigs tonight: check Tonight\'s targets filters.'; return; }
+  if (!b.data.targets.length) { $('#aiMsg').textContent = 'No targets suit the ticked rigs tonight with your Tonight\'s targets filters (types, Min alt, Min fill, Max panels): widen them and try again.'; return; }
   aiBusy = true; $('#aiGo').disabled = true; $('#aiMsg').textContent = 'Planning… (about 10–20 s)'; track('ai/plan');
   try {
     const r = await fetch('/api/plan', { method: 'POST', headers: aiHeaders(), body: JSON.stringify(b) });
@@ -5478,6 +5487,7 @@ function aiShow(p, rigMap, cached) {
   $('#aiOut').innerHTML = html;
 }
 $('#aiGo')?.addEventListener('click', aiRun);
+$('#aiRigSel')?.addEventListener('change', (e) => { try { localStorage.setItem('mrp.airig', e.target.value); } catch {} renderAi(); });
 { const el = $('#aiStyle'); if (el) { try { el.value = localStorage.getItem('mrp.aistyle') || 'best'; } catch {} el.addEventListener('change', () => { try { localStorage.setItem('mrp.aistyle', el.value); } catch {} }); } }
 $('#aiCodeBtn')?.addEventListener('click', () => { const v = $('#aiCodeIn').value.trim(); try { v ? localStorage.setItem(AI_KEY, v) : localStorage.removeItem(AI_KEY); } catch {} aiCheck(); });
 $('#aiOut')?.addEventListener('click', (e) => {
