@@ -2423,7 +2423,7 @@ function moonTonight() {
 // filter type, upgrading old "broadband" entries that are really UV/IR-cut or clear filters
 const fType = (f) => (NB_TYPES.has(f.type) ? 'nb' : f.type);                         // group single-line filters with narrowband
 function sizeAdvice(diag, fr) {      // smallest filter format that clears this sensor (with a margin for the light cone)
-  const need = diag + 20 / fr;
+  const need = diag + 10 / fr;
   return need <= 26 ? null : need <= 31 ? '31 mm' : need <= 36 ? '36 mm (or 2″)' : '2″';
 }
 function recommendFilter(r, g) {
@@ -2432,10 +2432,10 @@ function recommendFilter(r, g) {
   const diag = Math.hypot(g.c.wpx, g.c.hpx) * g.c.px / 1000, fr = g.fr || 5;
   const sizeTip = sizeAdvice(diag, fr);
   const all = state.filters || [];
-  const fits = (f) => (FILTER_CLEAR[f.size] || 46) >= diag + 20 / fr;          // clears the sensor comfortably
+  const fits = (f) => (FILTER_CLEAR[f.size] || 46) >= diag + 10 / fr;          // clears the sensor with room for the light cone (1.25″ on a 4/3″ sensor at f/4+ is fine in practice)
   const marginal = (f) => !fits(f) && (FILTER_CLEAR[f.size] || 46) >= diag;
   const bw = (f) => (Number.isFinite(f.bw) && f.bw > 0 ? f.bw : 99);              // narrower first when you've entered a bandwidth
-  const order = (a, b) => (fits(b) - fits(a)) || bw(a) - bw(b) || (FILTER_CLEAR[b.size] || 46) - (FILTER_CLEAR[a.size] || 46);
+  const order = (a, b) => (fits(b) - fits(a)) || bw(a) - bw(b) || (FILTER_CLEAR[a.size] || 46) - (FILTER_CLEAR[b.size] || 46);   // then the smallest size that clears the sensor
   // which filter types suit this camera + target
   const emission = need !== 'bb';
   const allowed = kind === 'osc' ? (emission ? ['dual', 'lp'] : (state.sky?.bortle > 5 ? ['lp', 'uvir'] : ['uvir', 'lp']))
@@ -2496,7 +2496,7 @@ function renderRigs() {
         <label class="note" title="Reducer / barlow factor (1 = none)">Reducer × <input class="num" style="width:56px" type="number" step="0.01" min="0.1" data-k="factor" value="${r.factor}"></label>
       </div>
       <div class="top">
-        <select data-k="filter" aria-label="Filter"><option value="">No filter / not set</option>${(state.filters || []).map((f) => `<option value="${f.id}" ${f.id === r.filter ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select>
+        <select data-k="filter" aria-label="Filter">${filterOptions(r)}</select>
       </div>
       <div class="row">
         <label style="flex:1">Rotation <input type="range" min="0" max="359" step="1" data-k="rot" value="${r.rot}"></label>
@@ -2566,7 +2566,7 @@ function renderRigStats() {
       const clear = FILTER_CLEAR[flt.size] || 46, diag = Math.hypot(g.c.wpx, g.c.hpx) * g.c.px / 1000, fr = g.fr || 5;
       const sz = (FILTER_SIZES.find(([k]) => k === flt.size) || [, flt.size])[1];
       if (clear < diag) vig = `<span class="tag bad">vignetting likely</span> ${sz} filter is smaller than the ${diag.toFixed(1)} mm sensor diagonal`;
-      else if (clear < diag + 20 / fr) vig = `<span class="tag warn">edge vignetting possible</span> ${sz} filter on a ${diag.toFixed(1)} mm sensor at f/${fr.toFixed(1)}; keep it close to the sensor`;
+      else if (clear < diag + 10 / fr) vig = `<span class="tag warn">edge vignetting possible</span> ${sz} filter on a ${diag.toFixed(1)} mm sensor at f/${fr.toFixed(1)}; keep it close to the sensor`;
     }
     let rec = '';
     const rf = state.target && recommendFilter(r, g);
@@ -2586,6 +2586,7 @@ function renderRigStats() {
       ${g.fl.toFixed(0)} mm${g.fr ? ` · f/${g.fr.toFixed(1)}` : ''} · <b>${g.scale.toFixed(2)}″/px</b> <span class="tag ${samp[0]}">${samp[1]}</span>${fit ? '<br>' + fit : ''}${vig ? '<br>' + vig : ''}${rec ? '<br>' + rec : ''}`;
   }
   renderCompare();
+  try { renderAi(); } catch {}   // the AI planner's rig list shows each rig's filter
 }
 /* ---------- Off-axis guider: prism footprint and Gaia guide stars ---------- */
 function oagDefaultOff(r) { const c = camById(r.cam); return c ? Math.round((c.hpx * c.px / 1000 / 2 + 2 + 4) * 2) / 2 : 14; }
@@ -2945,6 +2946,7 @@ function onRigInput(e) {
   if (k === 'on') { r.on = e.target.checked; el.classList.toggle('off', !r.on); }
   else if (k === 'color') { r.color = e.target.value; el.style.setProperty('--c', r.color); }
   else if (k === 'scope' || k === 'cam' || k === 'filter') r[k] = e.target.value;
+  if (k === 'cam') { const fs = el.querySelector('[data-k=filter]'); if (fs) fs.innerHTML = filterOptions(r); }
   else {
     let v = parseFloat(e.target.value); if (!isFinite(v)) return;
     if (k === 'cols' || k === 'rows') v = Math.min(10, Math.max(1, Math.round(v)));
@@ -3955,6 +3957,17 @@ const FILTER_TYPES = [['nb', 'Narrowband set: Hα + OIII + SII (mono)'], ['ha', 
   ['bb', 'LRGB set (mono)'], ['dual', 'Dual-band Hα + OIII (colour)'], ['lp', 'Light-pollution / CLS (colour)'], ['uvir', 'UV/IR cut / clear (colour)']];
 const NB_TYPES = new Set(['nb', 'ha', 'oiii', 'sii']);
 const FILTER_SIZES = [['1.25', '1.25″'], ['31', '31 mm'], ['36', '36 mm'], ['2', '2″'], ['50', '50 mm'], ['front', 'front / clip-in']];
+// a rig's filter list: only filters big enough for its sensor, smallest suitable size first (no gain from 2″ filters on a
+// small sensor); a filter already chosen stays listed even if it vignettes, so the warning can explain it
+function filterOptions(r) {
+  const c = camById(r.cam), diag = c ? Math.hypot(c.wpx, c.hpx) * c.px / 1000 : 0, clear = (f) => FILTER_CLEAR[f.size] || 46;
+  const sz = (f) => (FILTER_SIZES.find(([k]) => k === f.size) || [, f.size || ''])[1];
+  const list = (state.filters || []).filter((f) => clear(f) >= diag || f.id === r.filter)
+    .sort((a, b) => (FILTER_TYPES.findIndex(([k]) => k === a.type) - FILTER_TYPES.findIndex(([k]) => k === b.type)) || clear(a) - clear(b));
+  const hidden = (state.filters || []).length - list.length;
+  return `<option value="">No filter / not set</option>${list.map((f) => `<option value="${f.id}" ${f.id === r.filter ? 'selected' : ''}>${esc(f.name)}${sz(f) ? ` · ${esc(sz(f))}` : ''}${clear(f) < diag ? ' (too small)' : ''}</option>`).join('')}`
+    + (hidden ? `<option disabled>${hidden} smaller filter${hidden === 1 ? '' : 's'} hidden: too small for this sensor</option>` : '');
+}
 const FILTER_CLEAR = { '1.25': 26, '31': 31, '36': 36, '2': 46, '50': 50, front: 999 };   // usable clear aperture, mm
 const selOpts = (list, v) => list.map(([k, l]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${l}</option>`).join('');
 function eqRowFilt(f) { return `<tr data-id="${f.id}"><td><input data-f="name" value="${esc(f.name)}" placeholder="any name"></td><td><select data-f="type">${selOpts(FILTER_TYPES, f.type || 'nb')}</select></td><td><select data-f="size">${selOpts(FILTER_SIZES, f.size || '2')}</select></td><td><input data-f="bw" type="number" min="1" max="200" step="0.5" value="${f.bw ?? ''}" placeholder="optional" style="width:80px"></td><td><button class="icon ghost" data-del>✕</button></td></tr>`; }
@@ -4919,6 +4932,7 @@ function setTab(name, quiet) {
     if (!quiet) track('tab/' + name);
   }
   if (name === 'sky' || name === 'tonight') setTimeout(drawAltChart, 60);
+  if (name === 'tonight') setTimeout(() => { try { renderAi(); } catch {} }, 0);   // rig or filter changes made on Frame
 }
 $('#tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) setTab(b.dataset.go); });
 setTab((() => { try { return localStorage.getItem('mrp.tab'); } catch { return null; } })() || 'frame', true);
