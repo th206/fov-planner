@@ -2945,8 +2945,10 @@ function onRigInput(e) {
   }
   if (k === 'on') { r.on = e.target.checked; el.classList.toggle('off', !r.on); }
   else if (k === 'color') { r.color = e.target.value; el.style.setProperty('--c', r.color); }
-  else if (k === 'scope' || k === 'cam' || k === 'filter') r[k] = e.target.value;
-  if (k === 'cam') { const fs = el.querySelector('[data-k=filter]'); if (fs) fs.innerHTML = filterOptions(r); }
+  else if (k === 'scope' || k === 'cam' || k === 'filter') {
+    r[k] = e.target.value;
+    if (k === 'cam') { const fs = el.querySelector('[data-k=filter]'); if (fs) fs.innerHTML = filterOptions(r); }   // only filters that fit the new sensor
+  }
   else {
     let v = parseFloat(e.target.value); if (!isFinite(v)) return;
     if (k === 'cols' || k === 'rows') v = Math.min(10, Math.max(1, Math.round(v)));
