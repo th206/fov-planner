@@ -628,7 +628,8 @@
 
 
     <section data-tab="sky" class="card" id="siteCard" hidden>
-      <h2>At your site now <span class="note" id="siteAge" style="text-transform:none;letter-spacing:0"></span> <button class="icon ghost" id="siteReload" title="Refresh">↻</button></h2>
+      <h2><span id="siteTitle">At your site now</span> <span class="note" id="siteAge" style="text-transform:none;letter-spacing:0"></span> <button class="icon ghost" id="siteReload" title="Refresh">↻</button></h2>
+      <div id="siteWho" class="note" hidden></div>
       <div id="siteNow" class="note"></div>
     </section>
 
@@ -717,7 +718,7 @@
     </section>
 
     <section data-tab="gear" class="card" id="siteFeedCard">
-      <h2>Site sensors <span class="note" style="text-transform:none;letter-spacing:0">· live readings from your dew controller</span></h2>
+      <h2>Site sensors <span class="note" style="text-transform:none;letter-spacing:0">· live readings from your observing sites</span></h2>
       <div id="siteFeedBody" class="note"></div>
     </section>
 
@@ -926,7 +927,7 @@ function saveStore() {
   try {
     const txt = JSON.stringify({
       scopes: state.scopes, cams: state.cams, rigs: state.rigs, survey: state.survey,
-      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay, camSides: state.camSides, horizons: state.horizons, places: state.places, wish: state.wish, siteFeed: state.siteFeed,
+      boost: state.boost, tn: state.tn, filters: state.filters, seeing: state.seeing, useFcSeeing: state.useFcSeeing, defaultSite: state.defaultSite, follow: state.follow, wxModel: state.wxModel, dust: state.dust, subLen: state.subLen, galOverlay: state.galOverlay, camSides: state.camSides, horizons: state.horizons, places: state.places, wish: state.wish, siteFeeds: state.siteFeeds,
     });
     localStorage.setItem(KEY, txt);
     if (txt !== lastSaved && typeof syncEdited === 'function') syncEdited();   // a real change: sync it
@@ -950,7 +951,7 @@ const state = {
   galOverlay: saved.galOverlay ?? true,
   places: saved.places || null,
   wish: saved.wish || [],
-  siteFeed: saved.siteFeed || null,   // live site sensors: {id, key}   // wish list: [{key, label, t, size, center, rots, added}]   // saved observing sites [{name, lat, lon, tz}]
+  siteFeeds: saved.siteFeeds || (saved.siteFeed ? [saved.siteFeed] : []),   // live site sensors, one per station: {id, key, place, name, public, mast, useWind}   // live site sensors: {id, key}   // wish list: [{key, label, t, size, center, rots, added}]   // saved observing sites [{name, lat, lon, tz}]
   horizons: saved.horizons || [],   // [{lat, lon, name, pts: [[az, alt], …]}] trees/buildings per observing site
   camSides: saved.camSides || {},   // per camera id: {port, mirror, rowOrder, screws} — which way the camera body sits on the optics-check plot
   windBias: null,
@@ -2171,10 +2172,10 @@ $('#eventsList').addEventListener('click', (e) => {   // tap an event: plan that
   $('#night').value = n; $('#night').dispatchEvent(new Event('change')); requestAnimationFrame(() => $('#verdictCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
 });
 /* ---------- Live site sensors (CheapoDC etc. → worker /api/site) ---------- */
-let siteData = null, siteTimer = null, siteSeq = 0, siteWindCmp = null, siteLastTs = 0;
+let siteData = null, siteTimer = null, siteSeq = 0, siteWindCmp = null, siteLastTs = 0, siteShared = null;
 // Forecasts and airports give wind at the standard 10 m; an anemometer on a tripod or truck roof sits lower, where the
 // wind is weaker. Scale up with the log wind profile over open desert (roughness length 3 cm).
-function mastFactor() { const z = Math.max(0.5, Math.min(10, +state.siteFeed?.mast || 2)); return Math.log(10 / 0.03) / Math.log(z / 0.03); }
+function mastFactor() { const z = Math.max(0.5, Math.min(10, +curFeed()?.mast || 2)); return Math.log(10 / 0.03) / Math.log(z / 0.03); }
 function spark(hist, key, color, key2, color2) {   // tiny line chart of the last hours
   const pts = hist.filter((r) => Number.isFinite(r[key])); if (pts.length < 2) return '';
   const vals = [...pts.map((r) => r[key]), ...(key2 ? hist.filter((r) => Number.isFinite(r[key2])).map((r) => r[key2]) : [])];
@@ -2182,14 +2183,35 @@ function spark(hist, key, color, key2, color2) {   // tiny line chart of the las
   const line = (k) => hist.filter((r) => Number.isFinite(r[k])).map((r) => `${((r.ts - t0) / Math.max(1, t1 - t0) * W).toFixed(1)},${(Hh - 2 - (r[k] - lo) / Math.max(0.01, hi - lo) * (Hh - 4)).toFixed(1)}`).join(' ');
   return `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none"><polyline fill="none" stroke="${color}" stroke-width="1.5" points="${line(key)}"/>${key2 ? `<polyline fill="none" stroke="${color2}" stroke-width="1.2" stroke-dasharray="3 2" points="${line(key2)}"/>` : ''}</svg>`;
 }
+// each station belongs to one place: your own station's card (and its wind correction) shows when the planner is set to
+// within 25 km of it; otherwise a station another observer shares within 25 km is shown (readings only)
+function curFeed() {
+  const fs = state.siteFeeds || [], here = state.site;
+  const near = fs.filter((f) => f.place).map((f) => ({ f, km: distKm(here.lat, here.lon, f.place.lat, f.place.lon) })).filter((x) => x.km <= 25).sort((a, b) => a.km - b.km);
+  return near[0]?.f || fs.find((f) => !f.place) || null;
+}
+function siteNear() { return !!curFeed(); }
 async function loadSite() {
-  const f = state.siteFeed, card = $('#siteCard'); card.hidden = !f; if (!f) return;
-  const seq = ++siteSeq;
+  const f = curFeed(), card = $('#siteCard'), seq = ++siteSeq;
   try {
-    const r = await fetch(`/api/site/${f.id}?h=12`, { cache: 'no-store' }); if (!r.ok) throw new Error(r.status);
-    const d = await r.json(); if (seq !== siteSeq) return;
-    siteData = d; renderSite();
-  } catch { if (seq === siteSeq) $('#siteAge').textContent = '· could not reach the feed'; }
+    if (f) {
+      const r = await fetch(`/api/site/${f.id}?h=12`, { cache: 'no-store' }); if (!r.ok) throw new Error(r.status);
+      const d = await r.json(); if (seq !== siteSeq) return;
+      siteShared = null; siteData = d; card.hidden = false;
+    } else {
+      const { lat, lon } = state.site;
+      const r = await fetch(`/api/site/near?lat=${lat.toFixed(3)}&lon=${lon.toFixed(3)}`); if (!r.ok) throw new Error(r.status);
+      const j = await r.json(); if (seq !== siteSeq) return;
+      const st = (j.stations || [])[0];
+      if (!st) { siteShared = null; siteData = null; card.hidden = true; return; }
+      siteShared = st; siteData = st; card.hidden = false;
+    }
+    $('#siteTitle').textContent = siteShared ? 'Nearby station' : 'At your site now';
+    const w = $('#siteWho'); w.hidden = !siteShared && !f?.public;
+    w.innerHTML = siteShared ? `<b>${esc(siteShared.name || 'Observing site')}</b> · ${siteShared.km < 1 ? 'here' : siteShared.km + ' km away'} · shared live by another observer`
+      : f?.public ? '<span class="tag good">shared</span> people planning within 25 km of this station see these readings' : '';
+    renderSite();
+  } catch { if (seq === siteSeq && !card.hidden) $('#siteAge').textContent = '· could not reach the station'; }
 }
 function renderSite() {
   const d = siteData, box = $('#siteNow'); if (!box || !d) return;
@@ -2212,7 +2234,7 @@ function renderSite() {
     cells.push(`<div>Sky temperature<div class="sv">${f1(L.sky, ' °C')}</div><span class="note">${Number.isFinite(dlt) ? `${dlt.toFixed(1)} °C vs air ` : ''}${word}</span>${spark(H, 'sky', '#b392f0')}</div>`);
   }
   if (Number.isFinite(L.wind)) {
-    const c = siteWindCmp, mast = +state.siteFeed?.mast || 2, word = !c ? '' : c.ratio >= 1.3 ? '<span class="tag warn">stronger than forecast</span>' : c.ratio <= 0.75 ? '<span class="tag good">calmer than forecast</span>' : '<span class="tag good">as forecast</span>';
+    const c = siteShared ? null : siteWindCmp, mast = +curFeed()?.mast || 2, word = !c ? '' : c.ratio >= 1.3 ? '<span class="tag warn">stronger than forecast</span>' : c.ratio <= 0.75 ? '<span class="tag good">calmer than forecast</span>' : '<span class="tag good">as forecast</span>';
     cells.push(`<div>Wind<div class="sv">${f1(L.wind, ' km/h', 0)}</div>${Number.isFinite(L.gust) ? `<span class="note">gusts ${f1(L.gust, ' km/h', 0)}</span>` : ''}
       ${c ? `<br><span class="note">≈ ${Math.round(c.m10)} km/h at 10 m (sensor at ${mast} m) · forecast ${Math.round(c.fw)}</span> ${word}` : ''}${spark(H, 'wind', '#6ea8ff', 'gust', '#e5534b')}</div>`);
   }
@@ -2220,41 +2242,71 @@ function renderSite() {
   box.innerHTML = `<div class="sitegrid">${cells.join('')}</div><div class="note" style="margin-top:6px">${L.dev ? esc(L.dev) + ' · ' : ''}last 12 h${Number.isFinite(L.rssi) ? ` · Wi-Fi ${L.rssi} dBm` : ''}</div>`;
 }
 function siteFeedRender() {
-  const box = $('#siteFeedBody'), f = state.siteFeed; if (!box) return;
-  if (!f) {
-    box.innerHTML = `Send live readings from your CheapoDC (temperature, humidity, dew point, heater power, and your sky sensor) to the Sky tab, from the remote site over the phone hotspot.
-      <div class="row" style="margin-top:8px"><button type="button" class="icon" id="siteCreate">Create site feed</button></div>`;
-    return;
-  }
-  box.innerHTML = `Feed is set up. Put these two values into <code>CDCSiteFeed.h</code> in the CheapoDC firmware:
-    <div style="margin-top:6px">SITEFEED_ID <code>${esc(f.id)}</code><br>SITEFEED_KEY <code>${esc(f.key)}</code></div>
-    <div class="row" style="margin-top:8px"><label title="Off: the airport check corrects the wind forecast, and your anemometer is only shown. On: a fresh anemometer reading replaces the airport for the correction."><input type="checkbox" id="siteUseWind" ${f.useWind ? 'checked' : ''}> Use my anemometer to correct the wind forecast</label></div>
-    <div class="row" style="margin-top:8px"><label title="Forecasts give wind at 10 m; a lower sensor reads less, so its readings are scaled up">Anemometer height <input id="siteMast" class="num" type="number" min="0.5" max="10" step="0.5" style="width:60px" value="${esc(String(f.mast || 2))}"> m above ground</label></div>
-    <div class="row" style="margin-top:8px"><button type="button" class="icon ghost" id="siteCopy">Copy both lines</button>
-      <button type="button" class="icon ghost" id="siteDelete">Delete feed</button></div>
-    <div class="note" id="siteCopyOut"></div>
-    <div class="note" style="margin-top:6px">The key lets a device write readings; keep it out of public code. The feed travels with your synced settings, so all your devices show it.</div>`;
+  const box = $('#siteFeedBody'); if (!box) return;
+  const fs = state.siteFeeds || [], here = state.site;
+  const intro = `Send live readings from a CheapoDC or small weather station (temperature, humidity, dew point, heater power, wind, sky sensor) to the Sky tab, from the observing site over the phone hotspot. One feed per station.`;
+  if (!fs.length) { box.innerHTML = `${intro}<div class="row" style="margin-top:8px"><button type="button" class="icon" data-sact="create">Create site feed</button></div>`; return; }
+  box.innerHTML = fs.map((f, i) => {
+    const pl = f.place, same = pl && distKm(here.lat, here.lon, pl.lat, pl.lon) < 1;
+    const placeTxt = pl ? `<b>${esc(pl.name || `${pl.lat.toFixed(3)}, ${pl.lon.toFixed(3)}`)}</b> <span class="note">${pl.lat.toFixed(3)}, ${pl.lon.toFixed(3)}</span>` : '<span class="tag warn">not set</span> <span class="note">(shown at every place until you set it)</span>';
+    return `<div class="feedbox" data-fid="${esc(f.id)}" style="${i ? 'border-top:1px solid var(--line);margin-top:10px;padding-top:10px' : ''}">
+    <div class="row" style="gap:6px"><b style="color:var(--text)">Station ${fs.length > 1 ? i + 1 : ''}</b> <input data-sf="name" type="text" maxlength="60" placeholder="name shown to others, e.g. Al Rayyan desert" value="${esc(f.name || '')}" style="flex:1;min-width:0"></div>
+    <div style="margin:6px 0">Location: ${placeTxt}${same ? '' : ` <button type="button" class="icon ghost" data-sact="place">Set to ${esc(here.name || 'the current place')}</button>`}
+      <div class="note">Its readings appear on the Sky tab only when the planner is set to within 25 km of this place. Moving the station (e.g. on a trip)? Select the new place on the Sky tab, then press Set.</div></div>
+    <div class="row"><label title="Readings only (never the key). Shown on the Sky tab to anyone planning within 25 km; the location is rounded to about 1 km."><input type="checkbox" data-sf="public" ${f.public ? 'checked' : ''} ${pl ? '' : 'disabled'}> Share live readings with people planning within 25 km</label> <span class="note" data-sfmsg></span></div>
+    <div class="row" style="margin-top:6px"><label title="Off: the airport check corrects the wind forecast, and your anemometer is only shown. On: a fresh anemometer reading replaces the airport for the correction."><input type="checkbox" data-sf="useWind" ${f.useWind ? 'checked' : ''}> Use its anemometer to correct the wind forecast</label></div>
+    <div class="row" style="margin-top:6px"><label title="Forecasts give wind at 10 m; a lower sensor reads less, so its readings are scaled up">Anemometer height <input data-sf="mast" class="num" type="number" min="0.5" max="10" step="0.5" style="width:60px" value="${esc(String(f.mast || 2))}"> m above ground</label></div>
+    <details style="margin-top:6px"><summary>Firmware values (ID and key)</summary>
+      <div style="margin-top:6px">SITEFEED_ID <code>${esc(f.id)}</code><br>SITEFEED_KEY <code>${esc(f.key)}</code></div>
+      <div class="row" style="margin-top:6px"><button type="button" class="icon ghost" data-sact="copy">Copy both lines</button> <button type="button" class="icon ghost" data-sact="delete">Delete this feed</button></div>
+      <div class="note" data-sfcopy></div>
+      <div class="note">The key lets a device write readings; keep it private. Feeds travel with your synced settings.</div></details>
+    </div>`;
+  }).join('') + `<div class="row" style="margin-top:10px"><button type="button" class="icon ghost" data-sact="create">+ Add another station</button></div>`;
+}
+async function feedConfig(f) {   // tell the server whether the station is shared, its name and place
+  const res = await fetch(`/api/site/${f.id}/config`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-site-key': f.key },
+    body: JSON.stringify({ public: !!f.public && !!f.place, name: f.name || f.place?.name || '', lat: f.place?.lat, lon: f.place?.lon }) });
+  if (!res.ok) throw new Error(res.status);
 }
 document.addEventListener('click', async (e) => {
-  const id = e.target.id;
-  if (id === 'siteCreate') {
+  if (e.target.id === 'siteReload') { loadSite(); return; }
+  const act = e.target.dataset?.sact; if (!act) return;
+  const fid = e.target.closest('[data-fid]')?.dataset.fid, f = (state.siteFeeds || []).find((x) => x.id === fid);
+  if (act === 'create') {
     e.target.disabled = true;
-    try { const r = await fetch('/api/site', { method: 'POST' }); if (!r.ok) throw new Error(r.status); state.siteFeed = await r.json(); saveStore(); siteFeedRender(); loadSite(); track('site/create'); }
+    try { const r = await fetch('/api/site', { method: 'POST' }); if (!r.ok) throw new Error(r.status); const nf = await r.json();
+      nf.place = { name: state.site.name || '', lat: state.site.lat, lon: state.site.lon }; nf.name = state.site.name || ''; state.siteFeeds.push(nf);
+      saveStore(); siteFeedRender(); loadSite(); track('site/create'); }
     catch { e.target.disabled = false; $('#siteFeedBody').insertAdjacentHTML('beforeend', '<div class="note">Could not create the feed (works on fovplanner.com once worker.js is deployed).</div>'); }
-  } else if (id === 'siteCopy') {
-    const t = `#define SITEFEED_ID        "${state.siteFeed.id}"\n#define SITEFEED_KEY       "${state.siteFeed.key}"`;
-    try { await navigator.clipboard.writeText(t); $('#siteCopyOut').textContent = 'Copied.'; } catch { $('#siteCopyOut').textContent = t; }
-  } else if (id === 'siteDelete') {
-    if (!confirm('Delete the site feed and its readings? The CheapoDC will stop being able to send.')) return;
-    try { await fetch(`/api/site/${state.siteFeed.id}`, { method: 'DELETE', headers: { 'x-site-key': state.siteFeed.key } }); } catch {}
-    state.siteFeed = null; saveStore(); siteFeedRender(); loadSite();
-  } else if (id === 'siteReload') loadSite();
+  } else if (!f) return;
+  else if (act === 'copy') {
+    const t = `#define SITEFEED_ID        "${f.id}"\n#define SITEFEED_KEY       "${f.key}"`, out = e.target.closest('[data-fid]').querySelector('[data-sfcopy]');
+    try { await navigator.clipboard.writeText(t); out.textContent = 'Copied.'; } catch { out.textContent = t; }
+  } else if (act === 'delete') {
+    if (!confirm('Delete this site feed and its readings? The station will stop being able to send.')) return;
+    try { await fetch(`/api/site/${f.id}`, { method: 'DELETE', headers: { 'x-site-key': f.key } }); } catch {}
+    state.siteFeeds = state.siteFeeds.filter((x) => x !== f); saveStore(); siteFeedRender(); loadSite(); rerenderWeather();
+  } else if (act === 'place') {
+    f.place = { name: state.site.name || '', lat: state.site.lat, lon: state.site.lon }; saveStore(); siteFeedRender(); loadSite(); rerenderWeather();
+    if (f.public) feedConfig(f).catch(() => {});
+  }
 });
-document.addEventListener('change', (e) => { if (e.target.id === 'siteUseWind' && state.siteFeed) { state.siteFeed.useWind = e.target.checked; saveStore(); rerenderWeather(); } });
-document.addEventListener('change', (e) => { if (e.target.id === 'siteMast' && state.siteFeed) { const v = parseFloat(e.target.value); if (v > 0) { state.siteFeed.mast = v; saveStore(); renderSite(); rerenderWeather(); } } });
+document.addEventListener('change', async (e) => {
+  const k = e.target.dataset?.sf; if (!k) return;
+  const box = e.target.closest('[data-fid]'), f = (state.siteFeeds || []).find((x) => x.id === box?.dataset.fid); if (!f) return;
+  if (k === 'useWind') { f.useWind = e.target.checked; saveStore(); rerenderWeather(); }
+  else if (k === 'mast') { const v = parseFloat(e.target.value); if (v > 0) { f.mast = v; saveStore(); renderSite(); rerenderWeather(); } }
+  else if (k === 'name') { f.name = e.target.value.trim().slice(0, 60); saveStore(); if (f.public) feedConfig(f).catch(() => {}); }
+  else if (k === 'public') {
+    const msg = box.querySelector('[data-sfmsg]'); f.public = e.target.checked; msg.textContent = 'Saving…';
+    try { await feedConfig(f); saveStore(); msg.textContent = f.public ? 'Shared.' : 'Private.'; loadSite(); track(f.public ? 'site/share' : 'site/unshare'); }
+    catch { f.public = !f.public; e.target.checked = f.public; msg.textContent = 'Could not save (offline?).'; }
+  }
+});
 siteFeedRender(); loadSite();
-setInterval(() => { if (state.siteFeed && document.visibilityState === 'visible' && $('#app').dataset.tab === 'sky') loadSite(); else if (siteData) renderSite(); }, 60000);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.siteFeed) loadSite(); });
+setInterval(() => { if (document.visibilityState === 'visible' && $('#app').dataset.tab === 'sky') loadSite(); else if (siteData) renderSite(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') loadSite(); });
 function renderTonight() {
   renderWish(); renderEvents();
   renderComets();
@@ -3531,9 +3583,9 @@ function renderWeather(w, a, t0, t1, c) {
   // forecast running low. Your own anemometer at the site (live site feed) wins over the nearest airport.
   const nowMs = Date.now();
   let wb = state.windBias;
-  { const sw = siteData?.last, hf = mastFactor();
+  { const sw = siteNear() && !siteShared ? siteData?.last : null, hf = mastFactor();
     const hr = sw ? Math.floor(sw.ts / 3600e3) * 3600e3 : 0, fw = sw ? val('wind_speed_10m', hr) : null;
-    if (state.siteFeed?.useWind && sw && Number.isFinite(sw.wind) && nowMs - sw.ts < 20 * 60e3 && fw != null) {   // only when switched on (Gear → Site sensors)
+    if (curFeed()?.useWind && sw && Number.isFinite(sw.wind) && nowMs - sw.ts < 20 * 60e3 && fw != null) {   // only when switched on (Gear → Site sensors)
       const m10 = sw.wind * hf;
       wb = { ratio: Math.max(0.4, Math.min(3, (m10 + 4) / (fw + 4))), obs: m10, fc: fw, km: 0, at: sw.ts, site: true, raw: sw.wind };
     }
@@ -3888,6 +3940,7 @@ $('#placeDel').addEventListener('click', () => {
   state.places.splice(i, 1); saveStore(); renderLoc();
 });
 function siteChanged(debounced) {
+  try { siteFeedRender(); loadSite(); } catch {}   // the station card follows the place
   clearTimeout(siteChanged.t); siteChanged.t = setTimeout(updateSky, debounced ? 800 : 0);
   scheduleTonight(); renderMoon();
   renderLoc(); hzRender(); drawAltChart();
@@ -5107,7 +5160,7 @@ $('#addCam').addEventListener('click', () => $('#camTbl tbody').insertAdjacentHT
 $('#eqDlg').addEventListener('click', (e) => { if (e.target.matches('[data-del]')) e.target.closest('tr').remove(); });
 
 /* ---------- Backup: export / import ---------- */
-const BACKUP_KEYS = ['scopes', 'cams', 'filters', 'rigs', 'survey', 'boost', 'tn', 'seeing', 'useFcSeeing', 'defaultSite', 'follow', 'wxModel', 'dust', 'galOverlay', 'places', 'horizons', 'camSides', 'subLen', 'wish', 'siteFeed'];
+const BACKUP_KEYS = ['scopes', 'cams', 'filters', 'rigs', 'survey', 'boost', 'tn', 'seeing', 'useFcSeeing', 'defaultSite', 'follow', 'wxModel', 'dust', 'galOverlay', 'places', 'horizons', 'camSides', 'subLen', 'wish', 'siteFeeds'];
 const blobToDataUrl = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); });
 const dataUrlToBlob = async (u) => (await fetch(u)).blob();
 function downloadFile(name, text) {
@@ -5531,6 +5584,23 @@ try { navigator.storage?.persist?.(); } catch {}
 renderRigs();
 renderLoc();
 renderMoon();
+// A first visit starts at the visitor's approximate location (city level, from their internet connection via Cloudflare;
+// nothing is stored on the server) instead of the Doha default. "My location" on the Sky tab gives the exact spot.
+if (!saved.defaultSite && !saved.site) (async () => {
+  try {
+    const r = await fetch('/api/where', { cache: 'no-store' }); if (!r.ok) return;
+    const w = await r.json(), lat = +w.lat, lon = +w.lon;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || distKm(lat, lon, state.site.lat, state.site.lon) < 30) return;
+    if (state.defaultSite.name !== 'Doha, Qatar' || state.site.lat !== state.defaultSite.lat) return;   // the visitor already chose a place
+    let country = w.country || ''; try { country = new Intl.DisplayNames(['en'], { type: 'region' }).of(w.country) || country; } catch {}
+    const name = [w.city, country].filter(Boolean).join(', ');
+    await setSite(lat, lon, name);
+    state.defaultSite = { ...state.site };
+    if (state.places.length === 1 && state.places[0].name === 'Doha, Qatar') state.places = [{ ...state.site }];
+    saveStore(); renderLoc();
+    locMsg(`Set to ${name || 'your area'} from your internet connection (approximate). Use ◎ My location for the exact spot.`);
+  } catch {}
+})();
 updateSky();
 loadExtCatalogs();
 loadComets();

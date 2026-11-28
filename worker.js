@@ -21,6 +21,10 @@ export default {
       if (p.startsWith('/api/sync/')) return await syncApi(req, env, p);
       if (p === '/api/site' || p.startsWith('/api/site/')) return await siteApi(req, env, p, url);
       if (p === '/api/plan' || p.startsWith('/api/plan/')) return await planApi(req, env, p);
+      if (p === '/api/where') {   // the visitor's approximate location from Cloudflare (city level), for a sensible first-visit site; not stored
+        const c = req.cf || {};
+        return json({ lat: c.latitude ?? null, lon: c.longitude ?? null, city: c.city || null, country: c.country || null, tz: c.timezone || null }, 200, { 'cache-control': 'no-store' });
+      }
     } catch (e) {
       return json({ error: e.message || String(e) }, e.status || 500);
     }
@@ -123,10 +127,35 @@ async function siteApi(req, env, p, url) {
     await env.GALLERY.put(`site/${id}.auth.json`, JSON.stringify({ key: await sha(key), created: Date.now() }), { httpMetadata: { contentType: 'application/json' } });
     return json({ id, key }, 200, H);
   }
-  const id = p.slice('/api/site/'.length);
+  // public stations near a place (owners can share a station; it is only listed for places within 25 km of it)
+  if (p === '/api/site/near' && req.method === 'GET') {
+    const lat = +url.searchParams.get('lat'), lon = +url.searchParams.get('lon');
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) fail('lat/lon needed.');
+    const io = await env.GALLERY.get('site/public.json'), list = io ? await io.json() : [];
+    const near = list.map((s) => ({ ...s, km: kmBetween(lat, lon, s.lat, s.lon) })).filter((s) => s.km <= 25).sort((a, b) => a.km - b.km).slice(0, 3);
+    const since = Date.now() - 12 * 3600e3, out = [];
+    for (const s of near) {
+      const o = await env.GALLERY.get(`site/${s.id}.json`); if (!o) continue;
+      const d = await o.json(); if (!d.last || Date.now() - d.last.ts > 24 * 3600e3) continue;   // quiet for a day: not shown
+      out.push({ id: s.id, name: s.name, lat: s.lat, lon: s.lon, km: Math.round(s.km * 10) / 10, last: d.last, hist: (d.hist || []).filter((r) => r.ts >= since) });
+    }
+    return json({ stations: out }, 200, { ...H, 'cache-control': 'public, max-age=60' });
+  }
+  const parts = p.slice('/api/site/'.length).split('/'), id = parts[0], sub = parts[1];
   if (!/^[0-9a-f]{24}$/.test(id)) fail('Unknown feed.', 404);
   const ao = await env.GALLERY.get(`site/${id}.auth.json`); if (!ao) fail('Unknown feed.', 404);
   const dataKey = `site/${id}.json`;
+  if (sub === 'config' && req.method === 'POST') {   // owner: share publicly or not, station name and place (rounded to ~1 km)
+    const auth = await ao.json();
+    if ((await sha(req.headers.get('x-site-key') || '')) !== auth.key) fail('Wrong device key.', 403);
+    let c; try { c = await req.json(); } catch { fail('Bad config.'); }
+    const lat = Math.round(+c.lat * 100) / 100, lon = Math.round(+c.lon * 100) / 100, name = String(c.name || '').slice(0, 60).replace(/[<>]/g, '');
+    const pub = !!c.public && Number.isFinite(lat) && Number.isFinite(lon);
+    await env.GALLERY.put(`site/${id}.auth.json`, JSON.stringify({ ...auth, pub, name, lat, lon }), { httpMetadata: { contentType: 'application/json' } });
+    await setPublic(env, id, pub ? { id, name: name || 'Observing site', lat, lon } : null);
+    return json({ ok: true, public: pub }, 200, H);
+  }
+  if (sub) fail('Not found.', 404);
   if (req.method === 'GET') {
     const o = await env.GALLERY.get(dataKey);
     if (!o) return json({ last: null, hist: [] }, 200, H);
@@ -155,7 +184,7 @@ async function siteApi(req, env, p, url) {
   if (req.method === 'DELETE') {
     const auth = await ao.json();
     if ((await sha(req.headers.get('x-site-key') || '')) !== auth.key) fail('Wrong device key.', 403);
-    await env.GALLERY.delete([dataKey, `site/${id}.auth.json`]); return json({ ok: true }, 200, H);
+    await env.GALLERY.delete([dataKey, `site/${id}.auth.json`]); await setPublic(env, id, null); return json({ ok: true }, 200, H);
   }
   fail('Method not allowed.', 405);
 }
@@ -180,6 +209,7 @@ Rules:
 - Give filter and a sensible sub length for each block from the camera (mono/colour), filter type, f-ratio and sky brightness (e.g. narrowband 180-600 s, dual-band on colour 180-300 s, broadband 30-180 s under bright skies). Mention gain only in general terms ("unity gain"). Note a meridian flip when a block spans the time the target is highest.
 - target_style: "best" = the strongest plan for tonight. "showpieces" or "popular" = well-known bright targets are fine. "gems" = the user wants targets that are striking but rarely photographed by amateurs, the kind that make someone say "aha, what is that?": strong colour contrast (Ha and OIII together, blue reflection beside dark dust), unusual shapes (arcs, shells, bubbles, jets, dark filaments), or a small showpiece of interest inside a larger field. Use your own knowledge of how each listed object looks and how often it is imaged to choose; avoid the obvious famous objects even if listed. For each block, "why" must say in one sentence what makes that object special to look at, and whether it needs long integration because it is faint.
 - When the user asks for something specific (a type, "not common", "something new"), choose accordingly from the list; if nothing in the list matches, say so in the summary rather than substituting a famous object.
+- If the user's message states facts that differ from the data (their sky's Bortle class, the filters they own, the time they must stop), trust the user for those facts. Never invent targets, gear, coordinates or times. If the user describes a telescope or camera that is not among the rigs in the data, say in the summary that they should tick that rig before planning, and plan with the rigs given.
 - Respect the user's request ("ask") when it does not break these rules. Prefer wish-list targets when they fit well. Skip targets marked already_imaged unless asked.
 - If the night is clouded out or nothing fits, say so plainly and give the best fallback (e.g. the clearest hours, or calibration frames).
 - Plain, friendly language; short sentences; no markdown. Times as HH:MM local, as in the data.
@@ -275,6 +305,15 @@ async function planApi(req, env, p) {
   return json({ plan, left: owner ? null : Math.max(0, perIp - (u2.ips[ip] || 0)), usage: await usageView(u2) }, 200, H);
 }
 
+async function setPublic(env, id, entry) {   // the list of shared stations
+  const io = await env.GALLERY.get('site/public.json'), list = (io ? await io.json() : []).filter((s) => s.id !== id);
+  if (entry) list.push(entry);
+  await env.GALLERY.put('site/public.json', JSON.stringify(list), { httpMetadata: { contentType: 'application/json' } });
+}
+function kmBetween(a1, o1, a2, o2) {
+  const r = Math.PI / 180, x = Math.sin((a2 - a1) * r / 2) ** 2 + Math.cos(a1 * r) * Math.cos(a2 * r) * Math.sin((o2 - o1) * r / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(x));
+}
 function fail(msg, status = 400) { const e = new Error(msg); e.status = status; throw e; }
 
 async function authorised(req, env) {
